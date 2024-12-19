@@ -150,6 +150,7 @@ export interface QueryResult {
   columnTypeNames: string[];
   /** Rows of the query result. */
   rows: QueryRow[];
+  rowsCount: Long;
   /** Columns are masked or not. */
   masked: boolean[];
   /** Columns are sensitive or not. */
@@ -592,32 +593,6 @@ export function queryHistory_TypeToNumber(object: QueryHistory_Type): number {
     default:
       return -1;
   }
-}
-
-export interface GenerateRestoreSQLRequest {
-  /**
-   * The database name to execute the query against.
-   * Format: instances/{instance}/databases/{databaseName}
-   */
-  name: string;
-  /**
-   * The resource name of the sheet. It is used to get the original statement.
-   * Format: projects/{project}/sheets/{sheet}
-   */
-  sheet: string;
-  /**
-   * The data source to restore from.
-   * Format: instances/{instance}/databases/{databaseName}, for general engines.
-   * Or instances/{instance}/databases/{databaseName}/schemas/{schemaName}, for PG only.
-   */
-  backupDataSource: string;
-  /** The backup table name. */
-  backupTable: string;
-}
-
-export interface GenerateRestoreSQLResponse {
-  /** The restore SQL statement. */
-  statement: string;
 }
 
 function createBaseAdminExecuteRequest(): AdminExecuteRequest {
@@ -1135,6 +1110,7 @@ function createBaseQueryResult(): QueryResult {
     columnNames: [],
     columnTypeNames: [],
     rows: [],
+    rowsCount: Long.ZERO,
     masked: [],
     sensitive: [],
     error: "",
@@ -1154,6 +1130,9 @@ export const QueryResult: MessageFns<QueryResult> = {
     }
     for (const v of message.rows) {
       QueryRow.encode(v!, writer.uint32(26).fork()).join();
+    }
+    if (!message.rowsCount.equals(Long.ZERO)) {
+      writer.uint32(80).int64(message.rowsCount.toString());
     }
     writer.uint32(34).fork();
     for (const v of message.masked) {
@@ -1209,6 +1188,14 @@ export const QueryResult: MessageFns<QueryResult> = {
           }
 
           message.rows.push(QueryRow.decode(reader, reader.uint32()));
+          continue;
+        }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.rowsCount = Long.fromString(reader.int64().toString());
           continue;
         }
         case 4: {
@@ -1297,6 +1284,7 @@ export const QueryResult: MessageFns<QueryResult> = {
         ? object.columnTypeNames.map((e: any) => globalThis.String(e))
         : [],
       rows: globalThis.Array.isArray(object?.rows) ? object.rows.map((e: any) => QueryRow.fromJSON(e)) : [],
+      rowsCount: isSet(object.rowsCount) ? Long.fromValue(object.rowsCount) : Long.ZERO,
       masked: globalThis.Array.isArray(object?.masked) ? object.masked.map((e: any) => globalThis.Boolean(e)) : [],
       sensitive: globalThis.Array.isArray(object?.sensitive)
         ? object.sensitive.map((e: any) => globalThis.Boolean(e))
@@ -1318,6 +1306,9 @@ export const QueryResult: MessageFns<QueryResult> = {
     }
     if (message.rows?.length) {
       obj.rows = message.rows.map((e) => QueryRow.toJSON(e));
+    }
+    if (!message.rowsCount.equals(Long.ZERO)) {
+      obj.rowsCount = (message.rowsCount || Long.ZERO).toString();
     }
     if (message.masked?.length) {
       obj.masked = message.masked;
@@ -1348,6 +1339,9 @@ export const QueryResult: MessageFns<QueryResult> = {
     message.columnNames = object.columnNames?.map((e) => e) || [];
     message.columnTypeNames = object.columnTypeNames?.map((e) => e) || [];
     message.rows = object.rows?.map((e) => QueryRow.fromPartial(e)) || [];
+    message.rowsCount = (object.rowsCount !== undefined && object.rowsCount !== null)
+      ? Long.fromValue(object.rowsCount)
+      : Long.ZERO;
     message.masked = object.masked?.map((e) => e) || [];
     message.sensitive = object.sensitive?.map((e) => e) || [];
     message.error = object.error ?? "";
@@ -3519,172 +3513,6 @@ export const QueryHistory: MessageFns<QueryHistory> = {
   },
 };
 
-function createBaseGenerateRestoreSQLRequest(): GenerateRestoreSQLRequest {
-  return { name: "", sheet: "", backupDataSource: "", backupTable: "" };
-}
-
-export const GenerateRestoreSQLRequest: MessageFns<GenerateRestoreSQLRequest> = {
-  encode(message: GenerateRestoreSQLRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.name !== "") {
-      writer.uint32(10).string(message.name);
-    }
-    if (message.sheet !== "") {
-      writer.uint32(18).string(message.sheet);
-    }
-    if (message.backupDataSource !== "") {
-      writer.uint32(26).string(message.backupDataSource);
-    }
-    if (message.backupTable !== "") {
-      writer.uint32(34).string(message.backupTable);
-    }
-    return writer;
-  },
-
-  decode(input: BinaryReader | Uint8Array, length?: number): GenerateRestoreSQLRequest {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    let end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseGenerateRestoreSQLRequest();
-    while (reader.pos < end) {
-      const tag = reader.uint32();
-      switch (tag >>> 3) {
-        case 1: {
-          if (tag !== 10) {
-            break;
-          }
-
-          message.name = reader.string();
-          continue;
-        }
-        case 2: {
-          if (tag !== 18) {
-            break;
-          }
-
-          message.sheet = reader.string();
-          continue;
-        }
-        case 3: {
-          if (tag !== 26) {
-            break;
-          }
-
-          message.backupDataSource = reader.string();
-          continue;
-        }
-        case 4: {
-          if (tag !== 34) {
-            break;
-          }
-
-          message.backupTable = reader.string();
-          continue;
-        }
-      }
-      if ((tag & 7) === 4 || tag === 0) {
-        break;
-      }
-      reader.skip(tag & 7);
-    }
-    return message;
-  },
-
-  fromJSON(object: any): GenerateRestoreSQLRequest {
-    return {
-      name: isSet(object.name) ? globalThis.String(object.name) : "",
-      sheet: isSet(object.sheet) ? globalThis.String(object.sheet) : "",
-      backupDataSource: isSet(object.backupDataSource) ? globalThis.String(object.backupDataSource) : "",
-      backupTable: isSet(object.backupTable) ? globalThis.String(object.backupTable) : "",
-    };
-  },
-
-  toJSON(message: GenerateRestoreSQLRequest): unknown {
-    const obj: any = {};
-    if (message.name !== "") {
-      obj.name = message.name;
-    }
-    if (message.sheet !== "") {
-      obj.sheet = message.sheet;
-    }
-    if (message.backupDataSource !== "") {
-      obj.backupDataSource = message.backupDataSource;
-    }
-    if (message.backupTable !== "") {
-      obj.backupTable = message.backupTable;
-    }
-    return obj;
-  },
-
-  create(base?: DeepPartial<GenerateRestoreSQLRequest>): GenerateRestoreSQLRequest {
-    return GenerateRestoreSQLRequest.fromPartial(base ?? {});
-  },
-  fromPartial(object: DeepPartial<GenerateRestoreSQLRequest>): GenerateRestoreSQLRequest {
-    const message = createBaseGenerateRestoreSQLRequest();
-    message.name = object.name ?? "";
-    message.sheet = object.sheet ?? "";
-    message.backupDataSource = object.backupDataSource ?? "";
-    message.backupTable = object.backupTable ?? "";
-    return message;
-  },
-};
-
-function createBaseGenerateRestoreSQLResponse(): GenerateRestoreSQLResponse {
-  return { statement: "" };
-}
-
-export const GenerateRestoreSQLResponse: MessageFns<GenerateRestoreSQLResponse> = {
-  encode(message: GenerateRestoreSQLResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.statement !== "") {
-      writer.uint32(10).string(message.statement);
-    }
-    return writer;
-  },
-
-  decode(input: BinaryReader | Uint8Array, length?: number): GenerateRestoreSQLResponse {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    let end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseGenerateRestoreSQLResponse();
-    while (reader.pos < end) {
-      const tag = reader.uint32();
-      switch (tag >>> 3) {
-        case 1: {
-          if (tag !== 10) {
-            break;
-          }
-
-          message.statement = reader.string();
-          continue;
-        }
-      }
-      if ((tag & 7) === 4 || tag === 0) {
-        break;
-      }
-      reader.skip(tag & 7);
-    }
-    return message;
-  },
-
-  fromJSON(object: any): GenerateRestoreSQLResponse {
-    return { statement: isSet(object.statement) ? globalThis.String(object.statement) : "" };
-  },
-
-  toJSON(message: GenerateRestoreSQLResponse): unknown {
-    const obj: any = {};
-    if (message.statement !== "") {
-      obj.statement = message.statement;
-    }
-    return obj;
-  },
-
-  create(base?: DeepPartial<GenerateRestoreSQLResponse>): GenerateRestoreSQLResponse {
-    return GenerateRestoreSQLResponse.fromPartial(base ?? {});
-  },
-  fromPartial(object: DeepPartial<GenerateRestoreSQLResponse>): GenerateRestoreSQLResponse {
-    const message = createBaseGenerateRestoreSQLResponse();
-    message.statement = object.statement ?? "";
-    return message;
-  },
-};
-
 export type SQLServiceDefinition = typeof SQLServiceDefinition;
 export const SQLServiceDefinition = {
   name: "SQLService",
@@ -4131,82 +3959,6 @@ export const SQLServiceDefinition = {
               97,
               116,
               97,
-            ]),
-          ],
-        },
-      },
-    },
-    /** Deprecated. */
-    generateRestoreSQL: {
-      name: "GenerateRestoreSQL",
-      requestType: GenerateRestoreSQLRequest,
-      requestStream: false,
-      responseType: GenerateRestoreSQLResponse,
-      responseStream: false,
-      options: {
-        _unknownFields: {
-          800016: [new Uint8Array([2])],
-          578365826: [
-            new Uint8Array([
-              58,
-              58,
-              1,
-              42,
-              34,
-              53,
-              47,
-              118,
-              49,
-              47,
-              123,
-              110,
-              97,
-              109,
-              101,
-              61,
-              105,
-              110,
-              115,
-              116,
-              97,
-              110,
-              99,
-              101,
-              115,
-              47,
-              42,
-              47,
-              100,
-              97,
-              116,
-              97,
-              98,
-              97,
-              115,
-              101,
-              115,
-              47,
-              42,
-              125,
-              58,
-              103,
-              101,
-              110,
-              101,
-              114,
-              97,
-              116,
-              101,
-              82,
-              101,
-              115,
-              116,
-              111,
-              114,
-              101,
-              83,
-              81,
-              76,
             ]),
           ],
         },

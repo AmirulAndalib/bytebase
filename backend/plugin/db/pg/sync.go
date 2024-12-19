@@ -91,34 +91,49 @@ func (driver *Driver) SyncDBSchema(ctx context.Context) (*storepb.DatabaseSchema
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get schemas from database %q", driver.databaseName)
 	}
+	extensionDepend, err := getExtensionDepend(txn)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get extension dependencies from database %q", driver.databaseName)
+	}
 	columnMap, err := getTableColumns(txn)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get columns from database %q", driver.databaseName)
 	}
-	tableMap, externalTableMap, err := getTables(txn, isAtLeastPG10, columnMap)
+	var indexInheritanceMap map[db.IndexKey]*db.IndexKey
+	if isAtLeastPG10 {
+		indexInheritanceMap, err = getIndexInheritance(txn)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to get index inheritance from database %q", driver.databaseName)
+		}
+	}
+	indexMap, err := getIndexes(txn, indexInheritanceMap)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get indexes from database %q", driver.databaseName)
+	}
+	tableMap, externalTableMap, err := getTables(txn, isAtLeastPG10, columnMap, indexMap, extensionDepend)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get tables from database %q", driver.databaseName)
 	}
 	var tablePartitionMap map[db.TableKey][]*storepb.TablePartitionMetadata
 	if isAtLeastPG10 {
-		tablePartitionMap, err = getTablePartitions(txn)
+		tablePartitionMap, err = getTablePartitions(txn, indexMap)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get table partitions from database %q", driver.databaseName)
 		}
 	}
-	viewMap, err := getViews(txn, columnMap)
+	viewMap, err := getViews(txn, columnMap, extensionDepend)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get views from database %q", driver.databaseName)
 	}
-	materializedViewMap, err := getMaterializedViews(txn)
+	materializedViewMap, err := getMaterializedViews(txn, extensionDepend)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get materialized views from database %q", driver.databaseName)
 	}
-	functionMap, err := getFunctions(txn)
+	functionMap, err := getFunctions(txn, extensionDepend)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get functions from database %q", driver.databaseName)
 	}
-	sequenceMap, err := getSequences(txn)
+	sequenceMap, err := getSequences(txn, extensionDepend)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get sequences from database %q", driver.databaseName)
 	}
@@ -165,6 +180,36 @@ func warpTablePartitions(m map[db.TableKey][]*storepb.TablePartitionMetadata, sc
 		return partitions
 	}
 	return []*storepb.TablePartitionMetadata{}
+}
+
+var listExtensionDependQuery = `
+SELECT
+	objid
+FROM
+	pg_depend
+WHERE
+	deptype = 'e'
+`
+
+func getExtensionDepend(txn *sql.Tx) (map[int]bool, error) {
+	extensionDepend := make(map[int]bool)
+	rows, err := txn.Query(listExtensionDependQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var objid int
+		if err := rows.Scan(&objid); err != nil {
+			return nil, err
+		}
+		extensionDepend[objid] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return extensionDepend, nil
 }
 
 var listForeignKeyQuery = `
@@ -344,7 +389,7 @@ func getListTableQuery(isAtLeastPG10 bool) string {
 		relisPartition = " AND pc.relispartition IS FALSE"
 	}
 	return `
-	SELECT tbl.schemaname, tbl.tablename,
+	SELECT pc.oid, tbl.schemaname, tbl.tablename,
 		pg_table_size(format('%s.%s', quote_ident(tbl.schemaname), quote_ident(tbl.tablename))::regclass),
 		pg_indexes_size(format('%s.%s', quote_ident(tbl.schemaname), quote_ident(tbl.tablename))::regclass),
 		GREATEST(pc.reltuples::bigint, 0::BIGINT) AS estimate,
@@ -357,11 +402,7 @@ func getListTableQuery(isAtLeastPG10 bool) string {
 }
 
 // getTables gets all tables of a database.
-func getTables(txn *sql.Tx, isAtLeastPG10 bool, columnMap map[db.TableKey][]*storepb.ColumnMetadata) (map[string][]*storepb.TableMetadata, map[string][]*storepb.ExternalTableMetadata, error) {
-	indexMap, err := getIndexes(txn)
-	if err != nil {
-		return nil, nil, errors.Wrapf(err, "failed to get indexes")
-	}
+func getTables(txn *sql.Tx, isAtLeastPG10 bool, columnMap map[db.TableKey][]*storepb.ColumnMetadata, indexMap map[db.TableKey][]*storepb.IndexMetadata, extensionDepend map[int]bool) (map[string][]*storepb.TableMetadata, map[string][]*storepb.ExternalTableMetadata, error) {
 	foreignKeysMap, err := getForeignKeys(txn)
 	if err != nil {
 		return nil, nil, errors.Wrapf(err, "failed to get foreign keys")
@@ -381,12 +422,17 @@ func getTables(txn *sql.Tx, isAtLeastPG10 bool, columnMap map[db.TableKey][]*sto
 
 	for rows.Next() {
 		table := &storepb.TableMetadata{}
+		var oid int
 		var schemaName string
 		var comment sql.NullString
-		if err := rows.Scan(&schemaName, &table.Name, &table.DataSize, &table.IndexSize, &table.RowCount, &comment, &table.Owner); err != nil {
+		if err := rows.Scan(&oid, &schemaName, &table.Name, &table.DataSize, &table.IndexSize, &table.RowCount, &comment, &table.Owner); err != nil {
 			return nil, nil, err
 		}
 		if pgparser.IsSystemTable(table.Name) {
+			continue
+		}
+		if extensionDepend[oid] {
+			// Skip extension table.
 			continue
 		}
 		if comment.Valid {
@@ -467,7 +513,7 @@ WHERE
 	AND n.nspname NOT IN (%s)
 ORDER BY c.oid;`, pgparser.SystemSchemaWhereClause)
 
-func getTablePartitions(txn *sql.Tx) (map[db.TableKey][]*storepb.TablePartitionMetadata, error) {
+func getTablePartitions(txn *sql.Tx, indexMap map[db.TableKey][]*storepb.IndexMetadata) (map[db.TableKey][]*storepb.TablePartitionMetadata, error) {
 	result := make(map[db.TableKey][]*storepb.TablePartitionMetadata)
 	rows, err := txn.Query(listTablePartitionQuery)
 	if err != nil {
@@ -483,11 +529,13 @@ func getTablePartitions(txn *sql.Tx) (map[db.TableKey][]*storepb.TablePartitionM
 		if pgparser.IsSystemTable(tableName) || pgparser.IsSystemTable(inhTableName) {
 			continue
 		}
-		key := db.TableKey{Schema: inhSchemaName, Table: inhTableName}
+		key := db.TableKey{Schema: schemaName, Table: tableName}
+		inhKey := db.TableKey{Schema: inhSchemaName, Table: inhTableName}
 		metadata := &storepb.TablePartitionMetadata{
 			Name:       tableName,
 			Expression: partKeyDef,
 			Value:      relPartBound,
+			Indexes:    indexMap[key],
 		}
 		switch strings.ToLower(partitionType) {
 		case "l":
@@ -499,7 +547,46 @@ func getTablePartitions(txn *sql.Tx) (map[db.TableKey][]*storepb.TablePartitionM
 		default:
 			return nil, errors.Errorf("invalid partition type %q", partitionType)
 		}
-		result[key] = append(result[key], metadata)
+		result[inhKey] = append(result[inhKey], metadata)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+var listIndexInheritanceQuery = `
+SELECT
+  sc.nspname,
+  cc.relname,
+  sp.nspname,
+  cp.relname
+FROM
+  pg_catalog.pg_inherits i
+  left JOIN pg_catalog.pg_class cp ON cp.oid = i.inhparent
+  left join pg_catalog.pg_class cc ON cc.oid = i.inhrelid
+  left join pg_catalog.pg_namespace sp on cp.relnamespace = sp.oid
+  left join pg_catalog.pg_namespace sc on cc.relnamespace = sc.oid
+WHERE (cp.relkind = 'i' or cp.relkind = 'I') and (cc.relkind = 'i' or cc.relkind = 'I')
+`
+
+func getIndexInheritance(txn *sql.Tx) (map[db.IndexKey]*db.IndexKey, error) {
+	result := make(map[db.IndexKey]*db.IndexKey)
+	rows, err := txn.Query(listIndexInheritanceQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var schemaName, indexName, parentSchemaName, parentIndexName string
+		if err := rows.Scan(&schemaName, &indexName, &parentSchemaName, &parentIndexName); err != nil {
+			return nil, err
+		}
+		key := db.IndexKey{Schema: schemaName, Index: indexName}
+		parentKey := db.IndexKey{Schema: parentSchemaName, Index: parentIndexName}
+		result[key] = &parentKey
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -579,11 +666,13 @@ func getTableColumns(txn *sql.Tx) (map[db.TableKey][]*storepb.ColumnMetadata, er
 }
 
 var listMaterializedViewQuery = `
-SELECT schemaname, matviewname, definition, obj_description(format('%s.%s', quote_ident(schemaname), quote_ident(matviewname))::regclass) FROM pg_catalog.pg_matviews` + fmt.Sprintf(`
+SELECT pc.oid, schemaname, matviewname, definition, obj_description(format('%s.%s', quote_ident(schemaname), quote_ident(matviewname))::regclass)
+FROM pg_catalog.pg_matviews
+	LEFT JOIN pg_class as pc ON pc.oid = format('%s.%s', quote_ident(schemaname), quote_ident(matviewname))::regclass` + fmt.Sprintf(`
 WHERE schemaname NOT IN (%s)
 ORDER BY schemaname, matviewname;`, pgparser.SystemSchemaWhereClause)
 
-func getMaterializedViews(txn *sql.Tx) (map[string][]*storepb.MaterializedViewMetadata, error) {
+func getMaterializedViews(txn *sql.Tx, extensionDepend map[int]bool) (map[string][]*storepb.MaterializedViewMetadata, error) {
 	matviewMap := make(map[string][]*storepb.MaterializedViewMetadata)
 
 	rows, err := txn.Query(listMaterializedViewQuery)
@@ -593,13 +682,18 @@ func getMaterializedViews(txn *sql.Tx) (map[string][]*storepb.MaterializedViewMe
 	defer rows.Close()
 	for rows.Next() {
 		matview := &storepb.MaterializedViewMetadata{}
+		var oid int
 		var schemaName string
 		var def, comment sql.NullString
-		if err := rows.Scan(&schemaName, &matview.Name, &def, &comment); err != nil {
+		if err := rows.Scan(&oid, &schemaName, &matview.Name, &def, &comment); err != nil {
 			return nil, err
 		}
 		// Skip system views.
 		if pgparser.IsSystemView(matview.Name) {
+			continue
+		}
+		if extensionDepend[oid] {
+			// Skip extension view.
 			continue
 		}
 
@@ -632,12 +726,14 @@ func getMaterializedViews(txn *sql.Tx) (map[string][]*storepb.MaterializedViewMe
 }
 
 var listViewQuery = `
-SELECT schemaname, viewname, definition, obj_description(format('%s.%s', quote_ident(schemaname), quote_ident(viewname))::regclass) FROM pg_catalog.pg_views` + fmt.Sprintf(`
+SELECT pc.oid, schemaname, viewname, definition, obj_description(format('%s.%s', quote_ident(schemaname), quote_ident(viewname))::regclass)
+FROM pg_catalog.pg_views
+	LEFT JOIN pg_class as pc ON pc.oid = format('%s.%s', quote_ident(schemaname), quote_ident(viewname))::regclass` + fmt.Sprintf(`
 WHERE schemaname NOT IN (%s)
 ORDER BY schemaname, viewname;`, pgparser.SystemSchemaWhereClause)
 
 // getViews gets all views of a database.
-func getViews(txn *sql.Tx, columnMap map[db.TableKey][]*storepb.ColumnMetadata) (map[string][]*storepb.ViewMetadata, error) {
+func getViews(txn *sql.Tx, columnMap map[db.TableKey][]*storepb.ColumnMetadata, extensionDepend map[int]bool) (map[string][]*storepb.ViewMetadata, error) {
 	viewMap := make(map[string][]*storepb.ViewMetadata)
 
 	rows, err := txn.Query(listViewQuery)
@@ -647,13 +743,18 @@ func getViews(txn *sql.Tx, columnMap map[db.TableKey][]*storepb.ColumnMetadata) 
 	defer rows.Close()
 	for rows.Next() {
 		view := &storepb.ViewMetadata{}
+		var oid int
 		var schemaName string
 		var def, comment sql.NullString
-		if err := rows.Scan(&schemaName, &view.Name, &def, &comment); err != nil {
+		if err := rows.Scan(&oid, &schemaName, &view.Name, &def, &comment); err != nil {
 			return nil, err
 		}
 		// Skip system views.
 		if pgparser.IsSystemView(view.Name) {
+			continue
+		}
+		if extensionDepend[oid] {
+			// Skip extension view.
 			continue
 		}
 
@@ -765,9 +866,10 @@ func getExtensions(txn *sql.Tx) ([]*storepb.ExtensionMetadata, error) {
 }
 
 // getSequences gets all sequences of a database.
-func getSequences(txn *sql.Tx) (map[string][]*storepb.SequenceMetadata, error) {
+func getSequences(txn *sql.Tx, extensionDepend map[int]bool) (map[string][]*storepb.SequenceMetadata, error) {
 	query := `
 	SELECT
+		pc.oid,
 		schemaname,
 		sequencename,
 		data_type,
@@ -779,6 +881,7 @@ func getSequences(txn *sql.Tx) (map[string][]*storepb.SequenceMetadata, error) {
 		cache_size,
 		last_value
 	FROM pg_sequences
+		LEFT JOIN pg_class as pc ON pc.oid = format('%s.%s', quote_ident(schemaname), quote_ident(sequencename))::regclass
 	ORDER BY schemaname, sequencename;`
 	rows, err := txn.Query(query)
 	if err != nil {
@@ -787,12 +890,17 @@ func getSequences(txn *sql.Tx) (map[string][]*storepb.SequenceMetadata, error) {
 	defer rows.Close()
 	sequenceMap := make(map[string][]*storepb.SequenceMetadata)
 	for rows.Next() {
+		var oid int
 		var schemaName, sequenceName, dataType string
 		var startValue, minValue, maxValue, incrementBy, cacheSize int64
 		var cycle bool
 		var lastValue sql.NullInt64
-		if err := rows.Scan(&schemaName, &sequenceName, &dataType, &startValue, &minValue, &maxValue, &incrementBy, &cycle, &cacheSize, &lastValue); err != nil {
+		if err := rows.Scan(&oid, &schemaName, &sequenceName, &dataType, &startValue, &minValue, &maxValue, &incrementBy, &cycle, &cacheSize, &lastValue); err != nil {
 			return nil, err
+		}
+		if extensionDepend[oid] {
+			// Skip extension sequence.
+			continue
 		}
 		lastValueStr := ""
 		if lastValue.Valid {
@@ -873,7 +981,7 @@ FROM pg_indexes AS idx WHERE idx.schemaname NOT IN (%s)
 ORDER BY idx.schemaname, idx.tablename, idx.indexname;`, pgparser.SystemSchemaWhereClause)
 
 // getIndexes gets all indices of a database.
-func getIndexes(txn *sql.Tx) (map[db.TableKey][]*storepb.IndexMetadata, error) {
+func getIndexes(txn *sql.Tx, indexInheritanceMap map[db.IndexKey]*db.IndexKey) (map[db.TableKey][]*storepb.IndexMetadata, error) {
 	indexMap := make(map[db.TableKey][]*storepb.IndexMetadata)
 
 	rows, err := txn.Query(listIndexQuery)
@@ -917,6 +1025,10 @@ func getIndexes(txn *sql.Tx) (map[db.TableKey][]*storepb.IndexMetadata, error) {
 		if comment.Valid {
 			index.Comment = comment.String
 		}
+		if parentKey, ok := indexInheritanceMap[db.IndexKey{Schema: schemaName, Index: index.Name}]; ok && parentKey != nil {
+			index.ParentIndexSchema = parentKey.Schema
+			index.ParentIndexName = parentKey.Index
+		}
 
 		key := db.TableKey{Schema: schemaName, Table: tableName}
 		indexMap[key] = append(indexMap[key], index)
@@ -938,7 +1050,7 @@ func getIndexMethodType(stmt string) string {
 }
 
 var listFunctionQuery = `
-select n.nspname as function_schema,
+select p.oid, n.nspname as function_schema,
 	p.proname as function_name,
 	pg_catalog.pg_get_function_identity_arguments(p.oid) as arguments,
 	case when l.lanname = 'internal' then p.prosrc
@@ -952,7 +1064,7 @@ where n.nspname not in (%s)
 order by function_schema, function_name;`, pgparser.SystemSchemaWhereClause)
 
 // getFunctions gets all functions of a database.
-func getFunctions(txn *sql.Tx) (map[string][]*storepb.FunctionMetadata, error) {
+func getFunctions(txn *sql.Tx, extensionDepend map[int]bool) (map[string][]*storepb.FunctionMetadata, error) {
 	functionMap := make(map[string][]*storepb.FunctionMetadata)
 
 	rows, err := txn.Query(listFunctionQuery)
@@ -962,12 +1074,17 @@ func getFunctions(txn *sql.Tx) (map[string][]*storepb.FunctionMetadata, error) {
 	defer rows.Close()
 	for rows.Next() {
 		function := &storepb.FunctionMetadata{}
+		var oid int
 		var schemaName, arguments string
-		if err := rows.Scan(&schemaName, &function.Name, &arguments, &function.Definition); err != nil {
+		if err := rows.Scan(&oid, &schemaName, &function.Name, &arguments, &function.Definition); err != nil {
 			return nil, err
 		}
 		// Skip internal functions.
 		if pgparser.IsSystemFunction(function.Name, function.Definition) {
+			continue
+		}
+		if extensionDepend[oid] {
+			// Skip extension function.
 			continue
 		}
 
