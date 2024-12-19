@@ -512,9 +512,13 @@ func (s *DatabaseService) GetDatabaseMetadata(ctx context.Context, request *v1pb
 		}
 		filter = &metadataFilter{schema: schema, table: table}
 	}
-	v1pbMetadata, err := convertStoreDatabaseMetadata(ctx, dbSchema.GetMetadata(), dbSchema.GetConfig(), filter, nil /* optionalStores */)
+	v1pbMetadata, err := convertStoreDatabaseMetadata(dbSchema.GetMetadata(), filter)
 	if err != nil {
 		return nil, err
+	}
+	dbConfig := convertStoreDatabaseConfig(ctx, dbSchema.GetConfig(), filter, nil /* optionalStores */)
+	if dbConfig != nil {
+		v1pbMetadata.SchemaConfigs = dbConfig.SchemaConfigs
 	}
 	v1pbMetadata.Name = fmt.Sprintf("%s%s/%s%s%s", common.InstanceNamePrefix, database.InstanceID, common.DatabaseIDPrefix, database.DatabaseName, common.MetadataSuffix)
 
@@ -528,19 +532,28 @@ func (s *DatabaseService) GetDatabaseMetadata(ctx context.Context, request *v1pb
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to get masking rule policy, error: %v", err)
 		}
+
 		// Convert the maskingPolicy to a map to reduce the time complexity of searching.
-		maskingPolicy, err := s.store.GetMaskingPolicyByDatabaseUID(ctx, database.UID)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to find masking policy for database %q", databaseName)
-		}
 		maskingPolicyMap := make(map[maskingPolicyKey]*storepb.MaskData)
-		if maskingPolicy != nil {
-			for _, maskData := range maskingPolicy.MaskData {
-				maskingPolicyMap[maskingPolicyKey{
-					schema: maskData.Schema,
-					table:  maskData.Table,
-					column: maskData.Column,
-				}] = maskData
+		for _, schemaConfig := range dbSchema.GetConfig().SchemaConfigs {
+			for _, tableConfig := range schemaConfig.GetTableConfigs() {
+				for _, columnConfig := range tableConfig.GetColumnConfigs() {
+					if columnConfig.MaskingLevel == storepb.MaskingLevel_MASKING_LEVEL_UNSPECIFIED {
+						continue
+					}
+					maskingPolicyMap[maskingPolicyKey{
+						schema: schemaConfig.Name,
+						table:  tableConfig.Name,
+						column: columnConfig.Name,
+					}] = &storepb.MaskData{
+						Schema:                    schemaConfig.Name,
+						Table:                     tableConfig.Name,
+						Column:                    columnConfig.Name,
+						MaskingLevel:              columnConfig.MaskingLevel,
+						FullMaskingAlgorithmId:    columnConfig.FullMaskingAlgorithmId,
+						PartialMaskingAlgorithmId: columnConfig.PartialMaskingAlgorithmId,
+					}
+				}
 			}
 		}
 
@@ -574,6 +587,7 @@ func (s *DatabaseService) GetDatabaseMetadata(ctx context.Context, request *v1pb
 
 // UpdateDatabaseMetadata updates the metadata config of a database.
 func (s *DatabaseService) UpdateDatabaseMetadata(ctx context.Context, request *v1pb.UpdateDatabaseMetadataRequest) (*v1pb.DatabaseMetadata, error) {
+	// TODO(ed): check subscripion? FeatureSensitiveData etc
 	if request.DatabaseMetadata == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "empty database config")
 	}
@@ -639,9 +653,13 @@ func (s *DatabaseService) UpdateDatabaseMetadata(ctx context.Context, request *v
 		return nil, status.Errorf(codes.NotFound, "database schema %q not found", databaseName)
 	}
 
-	v1pbMetadata, err := convertStoreDatabaseMetadata(ctx, dbSchema.GetMetadata(), dbSchema.GetConfig(), nil /* filter */, nil /* optionalStores */)
+	v1pbMetadata, err := convertStoreDatabaseMetadata(dbSchema.GetMetadata(), nil /* filter */)
 	if err != nil {
 		return nil, err
+	}
+	dbConfig := convertStoreDatabaseConfig(ctx, dbSchema.GetConfig(), nil /* filter */, nil /* optionalStores */)
+	if dbConfig != nil {
+		v1pbMetadata.SchemaConfigs = dbConfig.SchemaConfigs
 	}
 	v1pbMetadata.Name = fmt.Sprintf("%s%s/%s%s%s", common.InstanceNamePrefix, database.InstanceID, common.DatabaseIDPrefix, database.DatabaseName, common.MetadataSuffix)
 	return v1pbMetadata, nil
@@ -1818,7 +1836,7 @@ func (s *DatabaseService) AdviseIndex(ctx context.Context, request *v1pb.AdviseI
 }
 
 func (s *DatabaseService) mysqlAdviseIndex(ctx context.Context, request *v1pb.AdviseIndexRequest, instance *store.InstanceMessage, database *store.DatabaseMessage) (*v1pb.AdviseIndexResponse, error) {
-	key, endpoint, err := s.getOpenAISetting((ctx))
+	key, endpoint, modelName, err := s.getOpenAISetting((ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -1946,7 +1964,7 @@ func (s *DatabaseService) mysqlAdviseIndex(ctx context.Context, request *v1pb.Ad
 		return nil
 	}
 
-	result, err := getOpenAIResponse(ctx, messages, key, endpoint, generateFunc)
+	result, err := getOpenAIResponse(ctx, messages, key, endpoint, modelName, generateFunc)
 	if err != nil {
 		return nil, err
 	}
@@ -1983,7 +2001,7 @@ func restoreNode(node tidbast.Node) (string, error) {
 }
 
 func (s *DatabaseService) pgAdviseIndex(ctx context.Context, request *v1pb.AdviseIndexRequest, database *store.DatabaseMessage) (*v1pb.AdviseIndexResponse, error) {
-	key, endpoint, err := s.getOpenAISetting((ctx))
+	key, endpoint, modelName, err := s.getOpenAISetting((ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -2054,7 +2072,7 @@ func (s *DatabaseService) pgAdviseIndex(ctx context.Context, request *v1pb.Advis
 		return nil
 	}
 
-	result, err := getOpenAIResponse(ctx, messages, key, endpoint, generateFunc)
+	result, err := getOpenAIResponse(ctx, messages, key, endpoint, modelName, generateFunc)
 	if err != nil {
 		return nil, err
 	}
@@ -2062,26 +2080,30 @@ func (s *DatabaseService) pgAdviseIndex(ctx context.Context, request *v1pb.Advis
 	return result, nil
 }
 
-func (s *DatabaseService) getOpenAISetting(ctx context.Context) (string, string, error) {
+func (s *DatabaseService) getOpenAISetting(ctx context.Context) (string, string, string, error) {
 	key, err := s.store.GetSettingV2(ctx, api.SettingPluginOpenAIKey)
 	if err != nil {
-		return "", "", status.Errorf(codes.Internal, "Failed to get setting: %v", err)
+		return "", "", "", status.Errorf(codes.Internal, "Failed to get setting: %v", err)
 	}
 	if key.Value == "" {
-		return "", "", status.Errorf(codes.FailedPrecondition, "OpenAI key is not set")
+		return "", "", "", status.Errorf(codes.FailedPrecondition, "OpenAI key is not set")
 	}
 	endpointSetting, err := s.store.GetSettingV2(ctx, api.SettingPluginOpenAIEndpoint)
 	if err != nil {
-		return "", "", status.Errorf(codes.Internal, "Failed to get setting: %v", err)
+		return "", "", "", status.Errorf(codes.Internal, "Failed to get setting: %v", err)
 	}
 	var endpoint string
 	if endpointSetting != nil {
 		endpoint = endpointSetting.Value
 	}
-	return key.Value, endpoint, nil
+	model, err := s.store.GetSettingV2(ctx, api.SettingPluginOpenAIModel)
+	if err != nil {
+		return "", "", "", status.Errorf(codes.Internal, "Failed to get setting: %v", err)
+	}
+	return key.Value, endpoint, model.Value, nil
 }
 
-func getOpenAIResponse(ctx context.Context, messages []openai.ChatCompletionMessage, key, endpoint string, generateResponse func(*v1pb.AdviseIndexResponse) error) (*v1pb.AdviseIndexResponse, error) {
+func getOpenAIResponse(ctx context.Context, messages []openai.ChatCompletionMessage, key, endpoint, model string, generateResponse func(*v1pb.AdviseIndexResponse) error) (*v1pb.AdviseIndexResponse, error) {
 	var result v1pb.AdviseIndexResponse
 	successful := false
 	var retErr error
@@ -2095,7 +2117,7 @@ func getOpenAIResponse(ctx context.Context, messages []openai.ChatCompletionMess
 		resp, err := client.CreateChatCompletion(
 			ctx,
 			openai.ChatCompletionRequest{
-				Model:            openai.GPT3Dot5Turbo,
+				Model:            model,
 				Messages:         messages,
 				Temperature:      0,
 				Stop:             []string{"#", ";"},

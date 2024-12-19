@@ -679,6 +679,45 @@
         
           
           <li>
+            <a href="#store%2fdeployment_config.proto">store/deployment_config.proto</a>
+            <ul>
+              
+                <li>
+                  <a href="#bytebase.store.DeploymentConfig"><span class="badge">M</span>DeploymentConfig</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.DeploymentSpec"><span class="badge">M</span>DeploymentSpec</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.LabelSelector"><span class="badge">M</span>LabelSelector</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.LabelSelectorRequirement"><span class="badge">M</span>LabelSelectorRequirement</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.Schedule"><span class="badge">M</span>Schedule</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.ScheduleDeployment"><span class="badge">M</span>ScheduleDeployment</a>
+                </li>
+              
+              
+                <li>
+                  <a href="#bytebase.store.LabelSelectorRequirement.OperatorType"><span class="badge">E</span>LabelSelectorRequirement.OperatorType</a>
+                </li>
+              
+              
+              
+            </ul>
+          </li>
+        
+          
+          <li>
             <a href="#store%2fexport_archive.proto">store/export_archive.proto</a>
             <ul>
               
@@ -921,6 +960,18 @@
               
                 <li>
                   <a href="#bytebase.store.PlanConfig.CreateDatabaseConfig.LabelsEntry"><span class="badge">M</span>PlanConfig.CreateDatabaseConfig.LabelsEntry</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.PlanConfig.DeploymentSnapshot"><span class="badge">M</span>PlanConfig.DeploymentSnapshot</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot"><span class="badge">M</span>PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot"><span class="badge">M</span>PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot</a>
                 </li>
               
                 <li>
@@ -1196,6 +1247,10 @@
               
                 <li>
                   <a href="#bytebase.store.AppIMSetting.Feishu"><span class="badge">M</span>AppIMSetting.Feishu</a>
+                </li>
+              
+                <li>
+                  <a href="#bytebase.store.AppIMSetting.Lark"><span class="badge">M</span>AppIMSetting.Lark</a>
                 </li>
               
                 <li>
@@ -2861,6 +2916,27 @@ This information is not authenticated and should be treated accordingly. </p></t
                   <td><p> </p></td>
                 </tr>
               
+                <tr>
+                  <td>masking_level</td>
+                  <td><a href="#bytebase.store.MaskingLevel">MaskingLevel</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>full_masking_algorithm_id</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>partial_masking_algorithm_id</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
             </tbody>
           </table>
 
@@ -3680,6 +3756,20 @@ If the key length is not specified, it&#39;s -1. </p></td>
                   <td><a href="#string">string</a></td>
                   <td></td>
                   <td><p>The definition of an index. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>parent_index_schema</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>The schema name of the parent index. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>parent_index_name</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>The index name of the parent index. </p></td>
                 </tr>
               
             </tbody>
@@ -4617,6 +4707,13 @@ in syntax [SUB]PARTITION {number}. </p></td>
                   <td><a href="#bytebase.store.TablePartitionMetadata">TablePartitionMetadata</a></td>
                   <td>repeated</td>
                   <td><p>The subpartitions is the list of subpartitions in a table partition. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>indexes</td>
+                  <td><a href="#bytebase.store.IndexMetadata">IndexMetadata</a></td>
+                  <td>repeated</td>
+                  <td><p> </p></td>
                 </tr>
               
             </tbody>
@@ -6290,6 +6387,227 @@ Used for authentication when connecting to the data source. </p></td>
     
       
       <div class="file-heading">
+        <h2 id="store/deployment_config.proto">store/deployment_config.proto</h2><a href="#title">Top</a>
+      </div>
+      <p></p>
+
+      
+        <h3 id="bytebase.store.DeploymentConfig">DeploymentConfig</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>schedule</td>
+                  <td><a href="#bytebase.store.Schedule">Schedule</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.DeploymentSpec">DeploymentSpec</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>selector</td>
+                  <td><a href="#bytebase.store.LabelSelector">LabelSelector</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.LabelSelector">LabelSelector</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>match_expressions</td>
+                  <td><a href="#bytebase.store.LabelSelectorRequirement">LabelSelectorRequirement</a></td>
+                  <td>repeated</td>
+                  <td><p>match_expressions is a list of label selector requirements. The requirements are ANDed. </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.LabelSelectorRequirement">LabelSelectorRequirement</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>key</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>operator</td>
+                  <td><a href="#bytebase.store.LabelSelectorRequirement.OperatorType">LabelSelectorRequirement.OperatorType</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>values</td>
+                  <td><a href="#string">string</a></td>
+                  <td>repeated</td>
+                  <td><p>Values is an array of string values. If the operator is In or NotIn, the values array must be non-empty. If the operator is Exists or DoesNotExist, the values array must be empty. This array is replaced during a strategic merge patch. </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.Schedule">Schedule</h3>
+        <p>Schedule is the message for deployment schedule.</p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>deployments</td>
+                  <td><a href="#bytebase.store.ScheduleDeployment">ScheduleDeployment</a></td>
+                  <td>repeated</td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.ScheduleDeployment">ScheduleDeployment</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>title</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>The title of the deployment (stage) in a schedule. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>id</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>spec</td>
+                  <td><a href="#bytebase.store.DeploymentSpec">DeploymentSpec</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+
+      
+        <h3 id="bytebase.store.LabelSelectorRequirement.OperatorType">LabelSelectorRequirement.OperatorType</h3>
+        <p></p>
+        <table class="enum-table">
+          <thead>
+            <tr><td>Name</td><td>Number</td><td>Description</td></tr>
+          </thead>
+          <tbody>
+            
+              <tr>
+                <td>OPERATOR_TYPE_UNSPECIFIED</td>
+                <td>0</td>
+                <td><p>The operator is not specified.</p></td>
+              </tr>
+            
+              <tr>
+                <td>IN</td>
+                <td>1</td>
+                <td><p>The operator is &#34;In&#34;.</p></td>
+              </tr>
+            
+              <tr>
+                <td>EXISTS</td>
+                <td>2</td>
+                <td><p>The operator is &#34;Exists&#34;.</p></td>
+              </tr>
+            
+              <tr>
+                <td>NOT_IN</td>
+                <td>3</td>
+                <td><p>The operator is &#34;Not In&#34;.</p></td>
+              </tr>
+            
+          </tbody>
+        </table>
+      
+
+      
+
+      
+    
+      
+      <div class="file-heading">
         <h2 id="store/export_archive.proto">store/export_archive.proto</h2><a href="#title">Top</a>
       </div>
       <p></p>
@@ -6936,6 +7254,14 @@ It is used to determine whether the table names and database names are case sens
                   <td></td>
                   <td><p>The maximum number of connections.
 The default is 10 if the value is unset or zero. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>sync_databases</td>
+                  <td><a href="#string">string</a></td>
+                  <td>repeated</td>
+                  <td><p>Enable sync for following databases.
+Default empty, means sync all schemas &amp; databases. </p></td>
                 </tr>
               
             </tbody>
@@ -8029,6 +8355,13 @@ Format: instances/{instance}/databases/{database} </p></td>
                   <td><p> </p></td>
                 </tr>
               
+                <tr>
+                  <td>deployment_snapshot</td>
+                  <td><a href="#bytebase.store.PlanConfig.DeploymentSnapshot">PlanConfig.DeploymentSnapshot</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
             </tbody>
           </table>
 
@@ -8241,6 +8574,106 @@ Format: environments/prod where prod is the environment resource ID. </p></td>
                 <tr>
                   <td>value</td>
                   <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.PlanConfig.DeploymentSnapshot">PlanConfig.DeploymentSnapshot</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>deployment_config_snapshot</td>
+                  <td><a href="#bytebase.store.PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot">PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>database_group_snapshots</td>
+                  <td><a href="#bytebase.store.PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot">PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot</a></td>
+                  <td>repeated</td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot">PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot</h3>
+        <p>The snapshot of the database group at the time of creation.</p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>database_group</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p>Format: projects/{project}/databaseGroups/{databaseGroup}. </p></td>
+                </tr>
+              
+                <tr>
+                  <td>databases</td>
+                  <td><a href="#string">string</a></td>
+                  <td>repeated</td>
+                  <td><p>Format: instances/{instance-id}/databases/{database-name}. </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot">PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot</h3>
+        <p>The snapshot of the project deployment config at the time of creation.</p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>name</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>title</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>deployment_config</td>
+                  <td><a href="#bytebase.store.DeploymentConfig">DeploymentConfig</a></td>
                   <td></td>
                   <td><p> </p></td>
                 </tr>
@@ -9920,6 +10353,13 @@ Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRu
                   <td><p> </p></td>
                 </tr>
               
+                <tr>
+                  <td>lark</td>
+                  <td><a href="#bytebase.store.AppIMSetting.Lark">AppIMSetting.Lark</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
             </tbody>
           </table>
 
@@ -9928,6 +10368,44 @@ Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRu
         
       
         <h3 id="bytebase.store.AppIMSetting.Feishu">AppIMSetting.Feishu</h3>
+        <p></p>
+
+        
+          <table class="field-table">
+            <thead>
+              <tr><td>Field</td><td>Type</td><td>Label</td><td>Description</td></tr>
+            </thead>
+            <tbody>
+              
+                <tr>
+                  <td>enabled</td>
+                  <td><a href="#bool">bool</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>app_id</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+                <tr>
+                  <td>app_secret</td>
+                  <td><a href="#string">string</a></td>
+                  <td></td>
+                  <td><p> </p></td>
+                </tr>
+              
+            </tbody>
+          </table>
+
+          
+
+        
+      
+        <h3 id="bytebase.store.AppIMSetting.Lark">AppIMSetting.Lark</h3>
         <p></p>
 
         

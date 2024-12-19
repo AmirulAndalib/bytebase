@@ -8,6 +8,7 @@
     "teams": "Teams",
     "dingtalk": "钉钉",
     "feishu": "飞书",
+    "lark": "Lark",
     "wecom": "企业微信",
     "system": "系统",
     "custom": "自定义",
@@ -356,7 +357,11 @@
       "canceled": "取消",
       "success": "成功",
       "warn": "警告",
-      "error": "错误"
+      "error": "错误",
+      "skipped": "已跳过",
+      "done": "完成",
+      "pending": "待执行",
+      "not-started": "未开始"
     },
     "type": {
       "bb-task-database-schema-update-ghost-sync": "同步数据",
@@ -753,6 +758,10 @@
           "openai-endpoint": {
             "self": "OpenAI API Endpoint",
             "description": "提供私有化部署的 OpenAI API Endpoint。"
+          },
+          "openai-model": {
+            "self": "OpenAI Model Name",
+            "description": "提供私有化部署的 OpenAI 模型名称。"
           }
         },
         "announcement": {
@@ -1738,7 +1747,9 @@
     "login-as-another": {
       "title": "您已以其他用户身份登录",
       "content": "我们将把您重定向到主页。"
-    }
+    },
+    "token-expired-title": "Token 已过期",
+    "token-expired-description": "Token 已过期，请重新登录"
   },
   "policy": {
     "rollout": {
@@ -2191,7 +2202,7 @@
         },
         "postgres-database-tenant-mode": {
           "self": "Postgres 数据库租户模式",
-          "description": "Postgres 数据库租户模式。如果启用，该工单将由数据库所有者运行。否则，该工单将由实例连接用户运行。"
+          "description": "Postgres 数据库租户模式。如果启用，该工单将由数据库 OWNER 运行。否则，该工单将由实例连接用户运行。"
         }
       }
     },
