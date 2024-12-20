@@ -53,6 +53,7 @@
     - [DatabaseMetadata.LabelsEntry](#bytebase-store-DatabaseMetadata-LabelsEntry)
     - [DatabaseSchemaMetadata](#bytebase-store-DatabaseSchemaMetadata)
     - [DependentColumn](#bytebase-store-DependentColumn)
+    - [EnumTypeMetadata](#bytebase-store-EnumTypeMetadata)
     - [EventMetadata](#bytebase-store-EventMetadata)
     - [ExtensionMetadata](#bytebase-store-ExtensionMetadata)
     - [ExternalTableMetadata](#bytebase-store-ExternalTableMetadata)
@@ -127,6 +128,16 @@
 - [store/db_group.proto](#store_db_group-proto)
     - [DatabaseGroupPayload](#bytebase-store-DatabaseGroupPayload)
   
+- [store/deployment_config.proto](#store_deployment_config-proto)
+    - [DeploymentConfig](#bytebase-store-DeploymentConfig)
+    - [DeploymentSpec](#bytebase-store-DeploymentSpec)
+    - [LabelSelector](#bytebase-store-LabelSelector)
+    - [LabelSelectorRequirement](#bytebase-store-LabelSelectorRequirement)
+    - [Schedule](#bytebase-store-Schedule)
+    - [ScheduleDeployment](#bytebase-store-ScheduleDeployment)
+  
+    - [LabelSelectorRequirement.OperatorType](#bytebase-store-LabelSelectorRequirement-OperatorType)
+  
 - [store/export_archive.proto](#store_export_archive-proto)
     - [ExportArchivePayload](#bytebase-store-ExportArchivePayload)
   
@@ -187,6 +198,9 @@
     - [PlanConfig.ChangeDatabaseConfig.GhostFlagsEntry](#bytebase-store-PlanConfig-ChangeDatabaseConfig-GhostFlagsEntry)
     - [PlanConfig.CreateDatabaseConfig](#bytebase-store-PlanConfig-CreateDatabaseConfig)
     - [PlanConfig.CreateDatabaseConfig.LabelsEntry](#bytebase-store-PlanConfig-CreateDatabaseConfig-LabelsEntry)
+    - [PlanConfig.DeploymentSnapshot](#bytebase-store-PlanConfig-DeploymentSnapshot)
+    - [PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot](#bytebase-store-PlanConfig-DeploymentSnapshot-DatabaseGroupSnapshot)
+    - [PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot](#bytebase-store-PlanConfig-DeploymentSnapshot-DeploymentConfigSnapshot)
     - [PlanConfig.ExportDataConfig](#bytebase-store-PlanConfig-ExportDataConfig)
     - [PlanConfig.ReleaseSource](#bytebase-store-PlanConfig-ReleaseSource)
     - [PlanConfig.Spec](#bytebase-store-PlanConfig-Spec)
@@ -252,6 +266,7 @@
     - [Announcement](#bytebase-store-Announcement)
     - [AppIMSetting](#bytebase-store-AppIMSetting)
     - [AppIMSetting.Feishu](#bytebase-store-AppIMSetting-Feishu)
+    - [AppIMSetting.Lark](#bytebase-store-AppIMSetting-Lark)
     - [AppIMSetting.Slack](#bytebase-store-AppIMSetting-Slack)
     - [AppIMSetting.Wecom](#bytebase-store-AppIMSetting-Wecom)
     - [DataClassificationSetting](#bytebase-store-DataClassificationSetting)
@@ -907,6 +922,9 @@ Metadata about the request.
 | semantic_type_id | [string](#string) |  |  |
 | labels | [ColumnConfig.LabelsEntry](#bytebase-store-ColumnConfig-LabelsEntry) | repeated | The user labels for a column. |
 | classification_id | [string](#string) |  |  |
+| masking_level | [MaskingLevel](#bytebase-store-MaskingLevel) |  |  |
+| full_masking_algorithm_id | [string](#string) |  |  |
+| partial_masking_algorithm_id | [string](#string) |  |  |
 
 
 
@@ -1039,6 +1057,22 @@ DependentColumn is the metadata for dependent columns.
 | schema | [string](#string) |  | The schema is the schema of a reference column. |
 | table | [string](#string) |  | The table is the table of a reference column. |
 | column | [string](#string) |  | The column is the name of a reference column. |
+
+
+
+
+
+
+<a name="bytebase-store-EnumTypeMetadata"></a>
+
+### EnumTypeMetadata
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | The name of a type. |
+| values | [string](#string) | repeated | The enum values of a type. |
 
 
 
@@ -1196,6 +1230,9 @@ IndexMetadata is the metadata for indexes.
 | visible | [bool](#bool) |  | The visible is whether the index is visible. |
 | comment | [string](#string) |  | The comment is the comment of an index. |
 | definition | [string](#string) |  | The definition of an index. |
+| parent_index_schema | [string](#string) |  | The schema name of the parent index. |
+| parent_index_name | [string](#string) |  | The index name of the parent index. |
+| granularity | [int64](#int64) |  | The number of granules in the block. It&#39;s a ClickHouse specific field. |
 
 
 
@@ -1350,6 +1387,7 @@ This is the concept of schema in Postgres, but it&#39;s a no-op for MySQL.
 | owner | [string](#string) |  |  |
 | triggers | [TriggerMetadata](#bytebase-store-TriggerMetadata) | repeated | The triggers is the list of triggers in a schema, triggers are sorted by table_name, event, timing, action_order. |
 | events | [EventMetadata](#bytebase-store-EventMetadata) | repeated |  |
+| enum_types | [EnumTypeMetadata](#bytebase-store-EnumTypeMetadata) | repeated |  |
 
 
 
@@ -1500,6 +1538,7 @@ TablePartitionMetadata is the metadata for table partitions.
 | value | [string](#string) |  | The value is the value of a table partition. For MySQL, the value is for RANGE and LIST partition types, - For a RANGE partition, it contains the value set in the partition&#39;s VALUES LESS THAN clause, which can be either an integer or MAXVALUE. - For a LIST partition, this column contains the values defined in the partition&#39;s VALUES IN clause, which is a list of comma-separated integer values. - For others, it&#39;s an empty string. |
 | use_default | [string](#string) |  | The use_default is whether the users use the default partition, it stores the different value for different database engines. For MySQL, it&#39;s [INT] type, 0 means not use default partition, otherwise, it&#39;s equals to number in syntax [SUB]PARTITION {number}. |
 | subpartitions | [TablePartitionMetadata](#bytebase-store-TablePartitionMetadata) | repeated | The subpartitions is the list of subpartitions in a table partition. |
+| indexes | [IndexMetadata](#bytebase-store-IndexMetadata) | repeated |  |
 
 
 
@@ -2216,6 +2255,130 @@ LIST, HASH (https://www.postgresql.org/docs/current/ddl-partitioning.html)
 
 
 
+<a name="store_deployment_config-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/deployment_config.proto
+
+
+
+<a name="bytebase-store-DeploymentConfig"></a>
+
+### DeploymentConfig
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schedule | [Schedule](#bytebase-store-Schedule) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-DeploymentSpec"></a>
+
+### DeploymentSpec
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| selector | [LabelSelector](#bytebase-store-LabelSelector) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-LabelSelector"></a>
+
+### LabelSelector
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| match_expressions | [LabelSelectorRequirement](#bytebase-store-LabelSelectorRequirement) | repeated | match_expressions is a list of label selector requirements. The requirements are ANDed. |
+
+
+
+
+
+
+<a name="bytebase-store-LabelSelectorRequirement"></a>
+
+### LabelSelectorRequirement
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| operator | [LabelSelectorRequirement.OperatorType](#bytebase-store-LabelSelectorRequirement-OperatorType) |  |  |
+| values | [string](#string) | repeated | Values is an array of string values. If the operator is In or NotIn, the values array must be non-empty. If the operator is Exists or DoesNotExist, the values array must be empty. This array is replaced during a strategic merge patch. |
+
+
+
+
+
+
+<a name="bytebase-store-Schedule"></a>
+
+### Schedule
+Schedule is the message for deployment schedule.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deployments | [ScheduleDeployment](#bytebase-store-ScheduleDeployment) | repeated |  |
+
+
+
+
+
+
+<a name="bytebase-store-ScheduleDeployment"></a>
+
+### ScheduleDeployment
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| title | [string](#string) |  | The title of the deployment (stage) in a schedule. |
+| id | [string](#string) |  |  |
+| spec | [DeploymentSpec](#bytebase-store-DeploymentSpec) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="bytebase-store-LabelSelectorRequirement-OperatorType"></a>
+
+### LabelSelectorRequirement.OperatorType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| OPERATOR_TYPE_UNSPECIFIED | 0 | The operator is not specified. |
+| IN | 1 | The operator is &#34;In&#34;. |
+| EXISTS | 2 | The operator is &#34;Exists&#34;. |
+| NOT_IN | 3 | The operator is &#34;Not In&#34;. |
+
+
+ 
+
+ 
+
+ 
+
+
+
 <a name="store_export_archive-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -2513,6 +2676,7 @@ InstanceOptions is the option for instances.
 | ----- | ---- | ----- | ----------- |
 | sync_interval | [google.protobuf.Duration](#google-protobuf-Duration) |  | How often the instance is synced. |
 | maximum_connections | [int32](#int32) |  | The maximum number of connections. The default is 10 if the value is unset or zero. |
+| sync_databases | [string](#string) | repeated | Enable sync for following databases. Default empty, means sync all schemas &amp; databases. |
 
 
 
@@ -2975,6 +3139,7 @@ InstanceRole is the API message for instance role.
 | steps | [PlanConfig.Step](#bytebase-store-PlanConfig-Step) | repeated |  |
 | vcs_source | [PlanConfig.VCSSource](#bytebase-store-PlanConfig-VCSSource) |  |  |
 | release_source | [PlanConfig.ReleaseSource](#bytebase-store-PlanConfig-ReleaseSource) |  |  |
+| deployment_snapshot | [PlanConfig.DeploymentSnapshot](#bytebase-store-PlanConfig-DeploymentSnapshot) |  |  |
 
 
 
@@ -3051,6 +3216,55 @@ InstanceRole is the API message for instance role.
 | ----- | ---- | ----- | ----------- |
 | key | [string](#string) |  |  |
 | value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-PlanConfig-DeploymentSnapshot"></a>
+
+### PlanConfig.DeploymentSnapshot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deployment_config_snapshot | [PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot](#bytebase-store-PlanConfig-DeploymentSnapshot-DeploymentConfigSnapshot) |  |  |
+| database_group_snapshots | [PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot](#bytebase-store-PlanConfig-DeploymentSnapshot-DatabaseGroupSnapshot) | repeated |  |
+
+
+
+
+
+
+<a name="bytebase-store-PlanConfig-DeploymentSnapshot-DatabaseGroupSnapshot"></a>
+
+### PlanConfig.DeploymentSnapshot.DatabaseGroupSnapshot
+The snapshot of the database group at the time of creation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| database_group | [string](#string) |  | Format: projects/{project}/databaseGroups/{databaseGroup}. |
+| databases | [string](#string) | repeated | Format: instances/{instance-id}/databases/{database-name}. |
+
+
+
+
+
+
+<a name="bytebase-store-PlanConfig-DeploymentSnapshot-DeploymentConfigSnapshot"></a>
+
+### PlanConfig.DeploymentSnapshot.DeploymentConfigSnapshot
+The snapshot of the project deployment config at the time of creation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| title | [string](#string) |  |  |
+| deployment_config | [DeploymentConfig](#bytebase-store-DeploymentConfig) |  |  |
 
 
 
@@ -3896,6 +4110,7 @@ SlowQueryPolicy is the policy configuration for slow query.
 | slack | [AppIMSetting.Slack](#bytebase-store-AppIMSetting-Slack) |  |  |
 | feishu | [AppIMSetting.Feishu](#bytebase-store-AppIMSetting-Feishu) |  |  |
 | wecom | [AppIMSetting.Wecom](#bytebase-store-AppIMSetting-Wecom) |  |  |
+| lark | [AppIMSetting.Lark](#bytebase-store-AppIMSetting-Lark) |  |  |
 
 
 
@@ -3905,6 +4120,23 @@ SlowQueryPolicy is the policy configuration for slow query.
 <a name="bytebase-store-AppIMSetting-Feishu"></a>
 
 ### AppIMSetting.Feishu
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| enabled | [bool](#bool) |  |  |
+| app_id | [string](#string) |  |  |
+| app_secret | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-AppIMSetting-Lark"></a>
+
+### AppIMSetting.Lark
 
 
 

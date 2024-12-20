@@ -1251,7 +1251,7 @@ func (s *SQLService) Check(ctx context.Context, request *v1pb.CheckRequest) (*v1
 
 	var overideMetadata *storepb.DatabaseSchemaMetadata
 	if request.Metadata != nil {
-		overideMetadata, _, err = convertV1DatabaseMetadata(ctx, request.Metadata, nil /* optionalStores */)
+		overideMetadata, err = convertV1DatabaseMetadata(request.Metadata)
 		if err != nil {
 			return nil, err
 		}
@@ -1474,7 +1474,7 @@ func (*SQLService) ParseMyBatisMapper(_ context.Context, request *v1pb.ParseMyBa
 // StringifyMetadata returns the stringified schema of the given metadata.
 func (*SQLService) StringifyMetadata(ctx context.Context, request *v1pb.StringifyMetadataRequest) (*v1pb.StringifyMetadataResponse, error) {
 	switch request.Engine {
-	case v1pb.Engine_MYSQL, v1pb.Engine_OCEANBASE, v1pb.Engine_POSTGRES, v1pb.Engine_TIDB, v1pb.Engine_ORACLE:
+	case v1pb.Engine_MYSQL, v1pb.Engine_OCEANBASE, v1pb.Engine_POSTGRES, v1pb.Engine_TIDB, v1pb.Engine_ORACLE, v1pb.Engine_REDSHIFT:
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported engine: %v", request.Engine)
 	}
@@ -1482,10 +1482,18 @@ func (*SQLService) StringifyMetadata(ctx context.Context, request *v1pb.Stringif
 	if request.Metadata == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "metadata is required")
 	}
-	storeSchemaMetadata, config, err := convertV1DatabaseMetadata(ctx, request.Metadata, nil /* optionalStores */)
+	storeSchemaMetadata, err := convertV1DatabaseMetadata(request.Metadata)
 	if err != nil {
 		return nil, err
 	}
+	config := convertV1DatabaseConfig(
+		ctx,
+		&v1pb.DatabaseConfig{
+			Name:          request.Metadata.Name,
+			SchemaConfigs: request.Metadata.SchemaConfigs,
+		},
+		nil, /* optionalStores */
+	)
 
 	if !request.ClassificationFromConfig {
 		sanitizeCommentForSchemaMetadata(storeSchemaMetadata, model.NewDatabaseConfig(config), request.ClassificationFromConfig)
@@ -1616,28 +1624,43 @@ func getOffsetAndOriginTable(backupTable string) (int, string, error) {
 }
 
 func checkAndGetDataSourceQueriable(ctx context.Context, storeInstance *store.Store, database *store.DatabaseMessage, dataSourceID string) (*store.DataSourceMessage, error) {
-	if dataSourceID == "" {
-		readOnlyDataSources, err := storeInstance.ListDataSourcesV2(ctx, &store.FindDataSourceMessage{
+	dataSource, serr := func() (*store.DataSourceMessage, *status.Status) {
+		// dataSourceID unspecified, we find a readonly dataSource
+		// first and fallback to admin dataSource.
+		if dataSourceID == "" {
+			dataSources, err := storeInstance.ListDataSourcesV2(ctx, &store.FindDataSourceMessage{
+				InstanceID: &database.InstanceID,
+			})
+			if err != nil {
+				return nil, status.Newf(codes.Internal, "failed to list data sources: %v", err)
+			}
+			for _, ds := range dataSources {
+				if ds.Type == api.RO {
+					return ds, nil
+				}
+			}
+			for _, ds := range dataSources {
+				if ds.Type == api.Admin {
+					return ds, nil
+				}
+			}
+			return nil, status.Newf(codes.FailedPrecondition, "no data source found")
+		}
+
+		dataSource, err := storeInstance.GetDataSource(ctx, &store.FindDataSourceMessage{
 			InstanceID: &database.InstanceID,
+			Name:       &dataSourceID,
 		})
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to list data sources: %v", err)
+			return nil, status.Newf(codes.Internal, "failed to get data source: %v", err)
 		}
-		if len(readOnlyDataSources) == 0 {
-			return nil, status.Errorf(codes.NotFound, "no data source found")
+		if dataSource == nil {
+			return nil, status.Newf(codes.NotFound, "data source %q not found", dataSourceID)
 		}
-		return readOnlyDataSources[0], nil
-	}
-
-	dataSource, err := storeInstance.GetDataSource(ctx, &store.FindDataSourceMessage{
-		InstanceID: &database.InstanceID,
-		Name:       &dataSourceID,
-	})
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get data source: %v", err)
-	}
-	if dataSource == nil {
-		return nil, status.Errorf(codes.NotFound, "data source %q not found", dataSourceID)
+		return dataSource, nil
+	}()
+	if serr != nil {
+		return nil, serr.Err()
 	}
 
 	// Always allow non-admin data source.

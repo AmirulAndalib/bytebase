@@ -47,9 +47,10 @@ func convertToPlan(ctx context.Context, s *store.Store, plan *store.PlanMessage)
 		ReleaseSource: &v1pb.Plan_ReleaseSource{
 			Release: plan.Config.GetReleaseSource().GetRelease(),
 		},
-		CreateTime:              timestamppb.New(time.Unix(plan.CreatedTs, 0)),
-		UpdateTime:              timestamppb.New(time.Unix(plan.UpdatedTs, 0)),
-		PlanCheckRunStatusCount: plan.PlanCheckRunStatusCount,
+		CreateTime:               timestamppb.New(time.Unix(plan.CreatedTs, 0)),
+		UpdateTime:               timestamppb.New(time.Unix(plan.UpdatedTs, 0)),
+		PlanCheckRunStatusCount:  plan.PlanCheckRunStatusCount,
+		DeploymentConfigSnapshot: convertToDeploymentConfigSnapshot(plan.Config.GetDeploymentSnapshot().GetDeploymentConfigSnapshot()),
 	}
 
 	creator, err := s.GetUserByID(ctx, plan.CreatorUID)
@@ -182,9 +183,10 @@ func convertPlan(plan *v1pb.Plan) *storepb.PlanConfig {
 		return nil
 	}
 	return &storepb.PlanConfig{
-		Steps:         convertPlanSteps(plan.Steps),
-		VcsSource:     convertPlanVcsSource(plan.VcsSource),
-		ReleaseSource: convertPlanReleaseSource(plan.ReleaseSource),
+		Steps:              convertPlanSteps(plan.Steps),
+		VcsSource:          convertPlanVcsSource(plan.VcsSource),
+		ReleaseSource:      convertPlanReleaseSource(plan.ReleaseSource),
+		DeploymentSnapshot: nil,
 	}
 }
 
@@ -208,6 +210,16 @@ func convertPlanReleaseSource(s *v1pb.Plan_ReleaseSource) *storepb.PlanConfig_Re
 	}
 }
 
+func convertToDeploymentConfigSnapshot(s *storepb.PlanConfig_DeploymentSnapshot_DeploymentConfigSnapshot) *v1pb.DeploymentConfig {
+	if s == nil {
+		return nil
+	}
+	return &v1pb.DeploymentConfig{
+		Name:     s.Name,
+		Title:    s.Title,
+		Schedule: convertToSchedule(s.DeploymentConfig.GetSchedule()),
+	}
+}
 func convertPlanSteps(steps []*v1pb.Plan_Step) []*storepb.PlanConfig_Step {
 	storeSteps := make([]*storepb.PlanConfig_Step, len(steps))
 	for i := range steps {
@@ -484,6 +496,18 @@ func convertToTaskRun(ctx context.Context, s *store.Store, stateCfg *state.State
 		Detail:        taskRun.ResultProto.Detail,
 		ChangeHistory: taskRun.ResultProto.ChangeHistory,
 		SchemaVersion: taskRun.ResultProto.Version,
+		Sheet:         "",
+	}
+
+	if taskRun.SheetUID != nil && *taskRun.SheetUID != 0 {
+		sheet, err := s.GetSheet(ctx, &store.FindSheetMessage{UID: taskRun.SheetUID})
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to get sheet")
+		}
+		if sheet == nil {
+			return nil, errors.Errorf("sheet not found for uid %d", *taskRun.SheetUID)
+		}
+		t.Sheet = common.FormatSheet(taskRun.ProjectID, sheet.UID)
 	}
 
 	if v, ok := stateCfg.TaskRunSchedulerInfo.Load(taskRun.ID); ok {

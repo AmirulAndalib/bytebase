@@ -55,7 +55,7 @@ type UpdatePlanMessage struct {
 	PipelineUID *int
 	Name        *string
 	Description *string
-	Config      *storepb.PlanConfig
+	Steps       *[]*storepb.PlanConfig_Step
 	UpdaterID   int
 }
 
@@ -186,11 +186,11 @@ func (s *Store) ListPlans(ctx context.Context, find *FindPlanMessage) ([]*PlanMe
 					e->>'status' AS status,
 					COUNT(*) AS count
 				FROM (
-					SELECT DISTINCT ON (plan_check_run.type, plan_check_run.config->>'instanceUid', plan_check_run.config->>'databaseName')
+					SELECT DISTINCT ON (plan_check_run.type, plan_check_run.config->>'instanceUid', plan_check_run.config->>'databaseName', plan_check_run.config->>'sheetUid')
 						jsonb_array_elements(plan_check_run.result->'results') e
 					FROM plan_check_run
 					WHERE plan_check_run.plan_id = plan.id
-					ORDER BY plan_check_run.type, plan_check_run.config->>'instanceUid', plan_check_run.config->>'databaseName', plan_check_run.id DESC
+					ORDER BY plan_check_run.type, plan_check_run.config->>'instanceUid', plan_check_run.config->>'databaseName', plan_check_run.config->>'sheetUid', plan_check_run.id DESC
 				) r
 				GROUP BY e->>'status'
 			) a
@@ -266,12 +266,14 @@ func (s *Store) UpdatePlan(ctx context.Context, patch *UpdatePlanMessage) error 
 	if v := patch.Description; v != nil {
 		set, args = append(set, fmt.Sprintf("description = $%d", len(args)+1)), append(args, *v)
 	}
-	if v := patch.Config; v != nil {
-		config, err := protojson.Marshal(v)
+	if v := patch.Steps; v != nil {
+		config, err := protojson.Marshal(&storepb.PlanConfig{
+			Steps: *v,
+		})
 		if err != nil {
 			return errors.Wrapf(err, "failed to marshal plan config")
 		}
-		set, args = append(set, fmt.Sprintf("config = $%d", len(args)+1)), append(args, config)
+		set, args = append(set, fmt.Sprintf("config = jsonb_set(config, '{steps}', ($%d)::JSONB->'steps')", len(args)+1)), append(args, config)
 	}
 	if v := patch.PipelineUID; v != nil {
 		set, args = append(set, fmt.Sprintf("pipeline_id = $%d", len(args)+1)), append(args, v)

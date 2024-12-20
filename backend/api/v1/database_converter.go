@@ -11,7 +11,7 @@ import (
 	v1pb "github.com/bytebase/bytebase/proto/generated-go/v1"
 )
 
-func convertStoreDatabaseMetadata(ctx context.Context, metadata *storepb.DatabaseSchemaMetadata, config *storepb.DatabaseConfig, filter *metadataFilter, optionalStores *store.Store) (*v1pb.DatabaseMetadata, error) {
+func convertStoreDatabaseMetadata(metadata *storepb.DatabaseSchemaMetadata, filter *metadataFilter) (*v1pb.DatabaseMetadata, error) {
 	m := &v1pb.DatabaseMetadata{
 		CharacterSet: metadata.CharacterSet,
 		Collation:    metadata.Collation,
@@ -152,7 +152,6 @@ func convertStoreDatabaseMetadata(ctx context.Context, metadata *storepb.Databas
 			}
 			s.Streams = append(s.Streams, v1Stream)
 		}
-		m.Schemas = append(m.Schemas, s)
 
 		for _, trigger := range schema.Triggers {
 			if trigger == nil {
@@ -205,6 +204,19 @@ func convertStoreDatabaseMetadata(ctx context.Context, metadata *storepb.Databas
 			}
 			s.Events = append(s.Events, v1Event)
 		}
+
+		for _, enum := range schema.EnumTypes {
+			if enum == nil {
+				continue
+			}
+			v1Enum := &v1pb.EnumTypeMetadata{
+				Name:   enum.Name,
+				Values: enum.Values,
+			}
+			s.EnumTypes = append(s.EnumTypes, v1Enum)
+		}
+
+		m.Schemas = append(m.Schemas, s)
 	}
 	for _, extension := range metadata.Extensions {
 		if extension == nil {
@@ -217,12 +229,25 @@ func convertStoreDatabaseMetadata(ctx context.Context, metadata *storepb.Databas
 			Description: extension.Description,
 		})
 	}
-
-	databaseConfig := convertStoreDatabaseConfig(ctx, config, filter, optionalStores)
-	if databaseConfig != nil {
-		m.SchemaConfigs = databaseConfig.SchemaConfigs
-	}
 	return m, nil
+}
+
+func convertStoreIndexMetadata(index *storepb.IndexMetadata) *v1pb.IndexMetadata {
+	return &v1pb.IndexMetadata{
+		Name:              index.Name,
+		Expressions:       index.Expressions,
+		KeyLength:         index.KeyLength,
+		Descending:        index.Descending,
+		Type:              index.Type,
+		Unique:            index.Unique,
+		Primary:           index.Primary,
+		Visible:           index.Visible,
+		Comment:           index.Comment,
+		Definition:        index.Definition,
+		ParentIndexSchema: index.ParentIndexSchema,
+		ParentIndexName:   index.ParentIndexName,
+		Granularity:       index.Granularity,
+	}
 }
 
 func convertStoreTableMetadata(table *storepb.TableMetadata) *v1pb.TableMetadata {
@@ -257,18 +282,7 @@ func convertStoreTableMetadata(table *storepb.TableMetadata) *v1pb.TableMetadata
 		if index == nil {
 			continue
 		}
-		t.Indexes = append(t.Indexes, &v1pb.IndexMetadata{
-			Name:        index.Name,
-			Expressions: index.Expressions,
-			KeyLength:   index.KeyLength,
-			Descending:  index.Descending,
-			Type:        index.Type,
-			Unique:      index.Unique,
-			Primary:     index.Primary,
-			Visible:     index.Visible,
-			Comment:     index.Comment,
-			Definition:  index.Definition,
-		})
+		t.Indexes = append(t.Indexes, convertStoreIndexMetadata(index))
 	}
 	for _, foreignKey := range table.ForeignKeys {
 		if foreignKey == nil {
@@ -339,6 +353,12 @@ func convertStoreTablePartitionMetadata(partition *storepb.TablePartitionMetadat
 		metadata.Type = v1pb.TablePartitionMetadata_LINEAR_KEY
 	default:
 		metadata.Type = v1pb.TablePartitionMetadata_TYPE_UNSPECIFIED
+	}
+	for _, index := range partition.Indexes {
+		if index == nil {
+			continue
+		}
+		metadata.Indexes = append(metadata.Indexes, convertStoreIndexMetadata(index))
 	}
 	for _, subpartition := range partition.Subpartitions {
 		if subpartition == nil {
@@ -490,14 +510,17 @@ func convertStoreTableConfig(ctx context.Context, table *storepb.TableConfig, op
 
 func convertStoreColumnConfig(column *storepb.ColumnConfig) *v1pb.ColumnConfig {
 	return &v1pb.ColumnConfig{
-		Name:             column.Name,
-		SemanticTypeId:   column.SemanticTypeId,
-		Labels:           column.Labels,
-		ClassificationId: column.ClassificationId,
+		Name:                      column.Name,
+		SemanticTypeId:            column.SemanticTypeId,
+		Labels:                    column.Labels,
+		ClassificationId:          column.ClassificationId,
+		MaskingLevel:              convertToV1PBMaskingLevel(column.MaskingLevel),
+		FullMaskingAlgorithmId:    column.FullMaskingAlgorithmId,
+		PartialMaskingAlgorithmId: column.PartialMaskingAlgorithmId,
 	}
 }
 
-func convertV1DatabaseMetadata(ctx context.Context, metadata *v1pb.DatabaseMetadata, optionalStores *store.Store) (*storepb.DatabaseSchemaMetadata, *storepb.DatabaseConfig, error) {
+func convertV1DatabaseMetadata(metadata *v1pb.DatabaseMetadata) (*storepb.DatabaseSchemaMetadata, error) {
 	m := &storepb.DatabaseSchemaMetadata{
 		Name:         metadata.Name,
 		CharacterSet: metadata.CharacterSet,
@@ -657,6 +680,16 @@ func convertV1DatabaseMetadata(ctx context.Context, metadata *v1pb.DatabaseMetad
 			}
 			s.Events = append(s.Events, storeEvent)
 		}
+		for _, enum := range schema.EnumTypes {
+			if enum == nil {
+				continue
+			}
+			storeEnum := &storepb.EnumTypeMetadata{
+				Name:   enum.Name,
+				Values: enum.Values,
+			}
+			s.EnumTypes = append(s.EnumTypes, storeEnum)
+		}
 		for _, sequence := range schema.Sequences {
 			if sequence == nil {
 				continue
@@ -689,16 +722,25 @@ func convertV1DatabaseMetadata(ctx context.Context, metadata *v1pb.DatabaseMetad
 			Description: extension.Description,
 		})
 	}
+	return m, nil
+}
 
-	databaseConfig := convertV1DatabaseConfig(
-		ctx,
-		&v1pb.DatabaseConfig{
-			Name:          metadata.Name,
-			SchemaConfigs: metadata.SchemaConfigs,
-		},
-		optionalStores,
-	)
-	return m, databaseConfig, nil
+func convertV1IndexMetadata(index *v1pb.IndexMetadata) *storepb.IndexMetadata {
+	return &storepb.IndexMetadata{
+		Name:              index.Name,
+		Expressions:       index.Expressions,
+		KeyLength:         index.KeyLength,
+		Descending:        index.Descending,
+		Type:              index.Type,
+		Unique:            index.Unique,
+		Primary:           index.Primary,
+		Visible:           index.Visible,
+		Comment:           index.Comment,
+		Definition:        index.Definition,
+		ParentIndexSchema: index.ParentIndexSchema,
+		ParentIndexName:   index.ParentIndexName,
+		Granularity:       index.Granularity,
+	}
 }
 
 func convertV1TableMetadata(table *v1pb.TableMetadata) *storepb.TableMetadata {
@@ -726,18 +768,7 @@ func convertV1TableMetadata(table *v1pb.TableMetadata) *storepb.TableMetadata {
 		if index == nil {
 			continue
 		}
-		t.Indexes = append(t.Indexes, &storepb.IndexMetadata{
-			Name:        index.Name,
-			Expressions: index.Expressions,
-			KeyLength:   index.KeyLength,
-			Descending:  index.Descending,
-			Type:        index.Type,
-			Unique:      index.Unique,
-			Primary:     index.Primary,
-			Visible:     index.Visible,
-			Comment:     index.Comment,
-			Definition:  index.Definition,
-		})
+		t.Indexes = append(t.Indexes, convertV1IndexMetadata(index))
 	}
 	for _, foreignKey := range table.ForeignKeys {
 		if foreignKey == nil {
@@ -798,6 +829,12 @@ func convertV1TablePartitionMetadata(tablePartition *v1pb.TablePartitionMetadata
 		metadata.Type = storepb.TablePartitionMetadata_LINEAR_KEY
 	default:
 		metadata.Type = storepb.TablePartitionMetadata_TYPE_UNSPECIFIED
+	}
+	for _, index := range tablePartition.Indexes {
+		if index == nil {
+			continue
+		}
+		metadata.Indexes = append(metadata.Indexes, convertV1IndexMetadata(index))
 	}
 	for _, subpartition := range tablePartition.Subpartitions {
 		if subpartition == nil {
@@ -940,10 +977,13 @@ func convertV1TableConfig(ctx context.Context, table *v1pb.TableConfig, optional
 
 func convertV1ColumnConfig(column *v1pb.ColumnConfig) *storepb.ColumnConfig {
 	return &storepb.ColumnConfig{
-		Name:             column.Name,
-		SemanticTypeId:   column.SemanticTypeId,
-		Labels:           column.Labels,
-		ClassificationId: column.ClassificationId,
+		Name:                      column.Name,
+		SemanticTypeId:            column.SemanticTypeId,
+		Labels:                    column.Labels,
+		ClassificationId:          column.ClassificationId,
+		MaskingLevel:              convertToStorePBMaskingLevel(column.MaskingLevel),
+		FullMaskingAlgorithmId:    column.FullMaskingAlgorithmId,
+		PartialMaskingAlgorithmId: column.PartialMaskingAlgorithmId,
 	}
 }
 

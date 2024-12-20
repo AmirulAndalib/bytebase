@@ -8,6 +8,7 @@
     "teams": "Teams",
     "dingtalk": "DingTalk",
     "feishu": "Feishu",
+    "lark": "Lark",
     "wecom": "WeCom",
     "system": "Sistema",
     "custom": "Personalizado",
@@ -356,7 +357,11 @@
       "canceled": "Cancelado",
       "success": "Éxito",
       "warn": "Advertencia",
-      "error": "Error"
+      "error": "Error",
+      "skipped": "Omitido",
+      "done": "Hecho",
+      "pending": "Pendiente",
+      "not-started": "No iniciado"
     },
     "type": {
       "bb-task-database-schema-update-ghost-sync": "Sincronizar datos",
@@ -753,6 +758,10 @@
           "openai-endpoint": {
             "self": "Punto de conexión de API de OpenAI",
             "description": "Proporcione una implementación privada del Punto de conexión de API de OpenAI."
+          },
+          "openai-model": {
+            "self": "Nombre del modelo de OpenAI",
+            "description": "Suministro de implementación privada del nombre del modelo de OpenAI."
           }
         },
         "announcement": {
@@ -1738,7 +1747,9 @@
     "login-as-another": {
       "title": "Has iniciado sesión como otro usuario",
       "content": "Lo redirigiremos a la página de inicio."
-    }
+    },
+    "token-expired-title": "Token caducado",
+    "token-expired-description": "El token ha expirado, por favor inicie sesión nuevamente"
   },
   "policy": {
     "rollout": {
@@ -2191,7 +2202,7 @@
         },
         "postgres-database-tenant-mode": {
           "self": "Modo inquilino de base de datos Postgres",
-          "description": "Modo de base de datos de inquilino de Postgres. Si está habilitado, esta tarea será ejecutada por el propietario de la base de datos. De lo contrario, la tarea será ejecutada por el usuario de conexión de la instancia."
+          "description": "Modo de base de datos de inquilino de Postgres. Si se habilita, el problema será ejecutado por el OWNER de la base de datos. De lo contrario, la tarea será ejecutada por el usuario de conexión de la instancia."
         }
       }
     },

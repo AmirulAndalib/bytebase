@@ -10,12 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/jackc/pgtype"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bytebase/bytebase/backend/common"
@@ -93,7 +91,7 @@ func (s *RolloutService) PreviewRollout(ctx context.Context, request *v1pb.Previ
 
 	serializeTasks := request.Plan.GetVcsSource() != nil
 
-	rollout, err := GetPipelineCreate(ctx, s.store, s.sheetManager, s.licenseService, s.dbFactory, steps, project, serializeTasks)
+	rollout, err := GetPipelineCreate(ctx, s.store, s.sheetManager, s.licenseService, s.dbFactory, steps, nil /* snapshot */, project, serializeTasks)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get pipeline create, error: %v", err)
 	}
@@ -239,40 +237,19 @@ func (s *RolloutService) CreateRollout(ctx context.Context, request *v1pb.Create
 
 	serializeTasks := plan.Config.GetVcsSource() != nil
 
-	pipelineCreate, err := GetPipelineCreate(ctx, s.store, s.sheetManager, s.licenseService, s.dbFactory, plan.Config.Steps, project, serializeTasks)
+	pipelineCreate, err := GetPipelineCreate(ctx, s.store, s.sheetManager, s.licenseService, s.dbFactory, plan.Config.GetSteps(), plan.Config.GetDeploymentSnapshot(), project, serializeTasks)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get pipeline create, error: %v", err)
 	}
 	if len(pipelineCreate.Stages) == 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "no database matched for deployment")
 	}
-	pipeline, err := s.createPipeline(ctx, project, pipelineCreate, principalID)
+	pipelineUID, err := s.store.CreatePipelineAIO(ctx, planID, pipelineCreate, request.StageId, principalID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create pipeline, error: %v", err)
 	}
 
-	// Update pipeline ID in the plan.
-	if err := s.store.UpdatePlan(ctx, &store.UpdatePlanMessage{
-		UID:         planID,
-		UpdaterID:   principalID,
-		PipelineUID: &pipeline.ID,
-	}); err != nil {
-		return nil, err
-	}
-
-	issue, err := s.store.GetIssueV2(ctx, &store.FindIssueMessage{PlanUID: &planID})
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get issue by plan id %v, error: %v", planID, err)
-	}
-	if issue != nil {
-		if _, err := s.store.UpdateIssueV2(ctx, issue.UID, &store.UpdateIssueMessage{
-			PipelineUID: &pipeline.ID,
-		}, principalID); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to update issue by plan id %v, error: %v", planID, err)
-		}
-	}
-
-	rollout, err := s.store.GetRollout(ctx, pipeline.ID)
+	rollout, err := s.store.GetRollout(ctx, pipelineUID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get pipeline, error: %v", err)
 	}
@@ -958,118 +935,9 @@ func (s *RolloutService) PreviewTaskRunRollback(ctx context.Context, request *v1
 	}, nil
 }
 
-// diffSpecs check if there are any specs removed, added or updated in the new plan.
-// Only updating sheet is taken into account.
-func diffSpecs(oldSteps []*v1pb.Plan_Step, newSteps []*v1pb.Plan_Step) ([]*v1pb.Plan_Spec, []*v1pb.Plan_Spec, []*v1pb.Plan_Spec) {
-	oldSpecs := make(map[string]*v1pb.Plan_Spec)
-	newSpecs := make(map[string]*v1pb.Plan_Spec)
-	var removed, added, updated []*v1pb.Plan_Spec
-	for _, step := range oldSteps {
-		for _, spec := range step.Specs {
-			oldSpecs[spec.Id] = spec
-		}
-	}
-	for _, step := range newSteps {
-		for _, spec := range step.Specs {
-			newSpecs[spec.Id] = spec
-		}
-	}
-	for _, step := range oldSteps {
-		for _, spec := range step.Specs {
-			if _, ok := newSpecs[spec.Id]; !ok {
-				removed = append(removed, spec)
-			}
-		}
-	}
-	for _, step := range newSteps {
-		for _, spec := range step.Specs {
-			if _, ok := oldSpecs[spec.Id]; !ok {
-				added = append(added, spec)
-			}
-		}
-	}
-	for _, step := range newSteps {
-		for _, spec := range step.Specs {
-			if oldSpec, ok := oldSpecs[spec.Id]; ok {
-				if !cmp.Equal(oldSpec, spec, protocmp.Transform()) {
-					updated = append(updated, spec)
-				}
-			}
-		}
-	}
-	return removed, added, updated
-}
-
-func validateSteps(steps []*v1pb.Plan_Step) error {
-	if len(steps) == 0 {
-		return errors.Errorf("the plan has zero step")
-	}
-	var databaseTarget, databaseGroupTarget int
-	configTypeCount := map[string]int{}
-	seenID := map[string]bool{}
-	for _, step := range steps {
-		if len(step.Specs) == 0 {
-			return errors.Errorf("the plan step has zero spec")
-		}
-		seenIDInStep := map[string]bool{}
-		for _, spec := range step.Specs {
-			id := spec.GetId()
-			if id == "" {
-				return errors.Errorf("spec id cannot be empty")
-			}
-			if seenID[id] {
-				return errors.Errorf("found duplicate spec id %q", spec.GetId())
-			}
-			seenID[id] = true
-			seenIDInStep[id] = true
-			switch config := spec.Config.(type) {
-			case *v1pb.Plan_Spec_ChangeDatabaseConfig:
-				configTypeCount["ChangeDatabaseConfig"]++
-				c := config.ChangeDatabaseConfig
-				if _, _, err := common.GetInstanceDatabaseID(c.Target); err == nil {
-					databaseTarget++
-				} else if _, _, err := common.GetProjectIDDatabaseGroupID(c.Target); err == nil {
-					databaseGroupTarget++
-				} else {
-					return errors.Errorf("unknown target %q", c.Target)
-				}
-			case *v1pb.Plan_Spec_CreateDatabaseConfig:
-				configTypeCount["CreateDatabaseConfig"]++
-			case *v1pb.Plan_Spec_ExportDataConfig:
-				configTypeCount["ExportDataConfig"]++
-			default:
-				return errors.Errorf("unexpected config type %T", spec.Config)
-			}
-		}
-		for _, spec := range step.Specs {
-			for _, dependOnSpec := range spec.DependsOnSpecs {
-				if !seenIDInStep[dependOnSpec] {
-					return errors.Errorf("spec %q depends on spec %q, but spec %q is not found in the step", spec.Id, dependOnSpec, dependOnSpec)
-				}
-				if dependOnSpec == spec.Id {
-					return errors.Errorf("spec %q depends on itself", spec.Id)
-				}
-			}
-		}
-	}
-
-	if len(configTypeCount) > 1 {
-		msg := "expect one kind of config, found"
-		for k, v := range configTypeCount {
-			msg += fmt.Sprintf(" %v %v", v, k)
-		}
-		return errors.New(msg)
-	}
-
-	if databaseGroupTarget > 0 && databaseTarget > 0 {
-		return errors.Errorf("found databaseGroupTarget and databaseTarget, expect only one kind")
-	}
-	return nil
-}
-
 // GetPipelineCreate gets a pipeline create message from a plan.
 // serializeTasks serialize tasks on the same database using taskDAG.
-func GetPipelineCreate(ctx context.Context, s *store.Store, sheetManager *sheet.Manager, licenseService enterprise.LicenseService, dbFactory *dbfactory.DBFactory, steps []*storepb.PlanConfig_Step, project *store.ProjectMessage, serializeTasks bool) (*store.PipelineMessage, error) {
+func GetPipelineCreate(ctx context.Context, s *store.Store, sheetManager *sheet.Manager, licenseService enterprise.LicenseService, dbFactory *dbfactory.DBFactory, steps []*storepb.PlanConfig_Step, snapshot *storepb.PlanConfig_DeploymentSnapshot /* nullable */, project *store.ProjectMessage, serializeTasks bool) (*store.PipelineMessage, error) {
 	// Flatten all specs from steps.
 	var specs []*storepb.PlanConfig_Spec
 	for _, step := range steps {
@@ -1078,7 +946,7 @@ func GetPipelineCreate(ctx context.Context, s *store.Store, sheetManager *sheet.
 
 	// Step 1 - transform database group specs.
 	// Others are untouched.
-	transformSpecs, err := transformDatabaseGroupSpecs(ctx, s, project, specs)
+	transformSpecs, err := transformDatabaseGroupSpecs(ctx, s, project, specs, snapshot)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to transform database group specs")
 	}
@@ -1094,12 +962,19 @@ func GetPipelineCreate(ctx context.Context, s *store.Store, sheetManager *sheet.
 	}
 
 	transformedSteps := steps
+	// All 0.
+	// deploymentIDs are present for ChangeDatabase type.
+	deploymentIDs := make([]string, len(transformedSteps))
 
 	// For ChangeDatabase specs, we will try to rebuild the steps based on the deployment config.
 	if filterByDeploymentConfig {
-		deploymentConfig, err := s.GetDeploymentConfigV2(ctx, project.UID)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get deployment config")
+		deploymentConfig := snapshot.GetDeploymentConfigSnapshot().GetDeploymentConfig()
+		if deploymentConfig == nil {
+			deploymentConfigMessage, err := s.GetDeploymentConfigV2(ctx, project.UID)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to get deployment config")
+			}
+			deploymentConfig = deploymentConfigMessage.Config
 		}
 		if err := utils.ValidateDeploymentSchedule(deploymentConfig.Schedule); err != nil {
 			return nil, errors.Wrapf(err, "failed to validate and get deployment schedule")
@@ -1126,7 +1001,7 @@ func GetPipelineCreate(ctx context.Context, s *store.Store, sheetManager *sheet.
 			}
 		}
 		// Calculate the matrix of databases based on the deployment schedule.
-		matrix, err := utils.GetDatabaseMatrixFromDeploymentSchedule(deploymentConfig.Schedule, databases)
+		matrix, err := utils.GetDatabaseMatrixFromDeploymentSchedule(deploymentConfig.GetSchedule(), databases)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get database matrix from deployment schedule")
 		}
@@ -1142,13 +1017,14 @@ func GetPipelineCreate(ctx context.Context, s *store.Store, sheetManager *sheet.
 		databaseLoaded := map[string]bool{}
 
 		var steps []*storepb.PlanConfig_Step
+		deploymentIDs = []string{}
 		for i, databases := range matrix {
 			if len(databases) == 0 {
 				continue
 			}
 
 			step := &storepb.PlanConfig_Step{
-				Title: deploymentConfig.Schedule.Deployments[i].Name,
+				Title: deploymentConfig.GetSchedule().Deployments[i].Title,
 			}
 			for _, database := range databases {
 				name := common.FormatDatabase(database.InstanceID, database.DatabaseName)
@@ -1163,16 +1039,20 @@ func GetPipelineCreate(ctx context.Context, s *store.Store, sheetManager *sheet.
 				databaseLoaded[name] = true
 			}
 			steps = append(steps, step)
+			deploymentIDs = append(deploymentIDs, deploymentConfig.GetSchedule().Deployments[i].Id)
 		}
 		transformedSteps = steps
 	}
 
 	pipelineCreate := &store.PipelineMessage{
-		Name: "Rollout Pipeline",
+		Name:      "Rollout Pipeline",
+		ProjectID: project.ResourceID,
 	}
 
-	for _, step := range transformedSteps {
-		stageCreate := &store.StageMessage{}
+	for i, step := range transformedSteps {
+		stageCreate := &store.StageMessage{
+			DeploymentID: deploymentIDs[i],
+		}
 
 		var stageEnvironmentID string
 		registerEnvironmentID := func(environmentID string) error {
@@ -1270,61 +1150,6 @@ func getTaskIndexDAGs(specs []*storepb.PlanConfig_Spec, getTaskIndexes func(spec
 		}
 	}
 	return taskIndexDAGs
-}
-
-func (s *RolloutService) createPipeline(ctx context.Context, project *store.ProjectMessage, pipelineCreate *store.PipelineMessage, creatorID int) (*store.PipelineMessage, error) {
-	pipelineCreated, err := s.store.CreatePipelineV2(ctx, &store.PipelineMessage{
-		Name:      pipelineCreate.Name,
-		ProjectID: project.ResourceID,
-	}, creatorID)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create pipeline for issue")
-	}
-
-	var stageCreates []*store.StageMessage
-	for _, stage := range pipelineCreate.Stages {
-		stageCreates = append(stageCreates, &store.StageMessage{
-			Name:          stage.Name,
-			EnvironmentID: stage.EnvironmentID,
-			PipelineID:    pipelineCreated.ID,
-		})
-	}
-	createdStages, err := s.store.CreateStageV2(ctx, stageCreates, creatorID)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create stages for issue")
-	}
-	if len(createdStages) != len(stageCreates) {
-		return nil, errors.Errorf("failed to create stages, expect to have created %d stages, got %d", len(stageCreates), len(createdStages))
-	}
-
-	for i, stageCreate := range pipelineCreate.Stages {
-		createdStage := createdStages[i]
-
-		var taskCreateList []*store.TaskMessage
-		for _, taskCreate := range stageCreate.TaskList {
-			c := taskCreate
-			c.CreatorID = creatorID
-			c.PipelineID = pipelineCreated.ID
-			c.StageID = createdStage.ID
-			taskCreateList = append(taskCreateList, c)
-		}
-		tasks, err := s.store.CreateTasksV2(ctx, taskCreateList...)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create tasks for issue")
-		}
-
-		// TODO(p0ny): create task dags in batch.
-		for _, indexDAG := range stageCreate.TaskIndexDAGList {
-			if err := s.store.CreateTaskDAGV2(ctx, &store.TaskDAGMessage{
-				FromTaskID: tasks[indexDAG.FromIndex].ID,
-				ToTaskID:   tasks[indexDAG.ToIndex].ID,
-			}); err != nil {
-				return nil, errors.Wrap(err, "failed to create task DAG for issue")
-			}
-		}
-	}
-
-	return pipelineCreated, nil
 }
 
 func GetValidRolloutPolicyForStage(ctx context.Context, stores *store.Store, licenseService enterprise.LicenseService, stage *store.StageMessage) (*storepb.RolloutPolicy, error) {

@@ -28,6 +28,7 @@ import (
 	"github.com/bytebase/bytebase/backend/plugin/mail"
 	"github.com/bytebase/bytebase/backend/plugin/schema"
 	"github.com/bytebase/bytebase/backend/plugin/webhook/feishu"
+	"github.com/bytebase/bytebase/backend/plugin/webhook/lark"
 	"github.com/bytebase/bytebase/backend/plugin/webhook/slack"
 	"github.com/bytebase/bytebase/backend/plugin/webhook/wecom"
 	"github.com/bytebase/bytebase/backend/store"
@@ -67,6 +68,7 @@ var whitelistSettings = []api.SettingName{
 	api.SettingWatermark,
 	api.SettingPluginOpenAIKey,
 	api.SettingPluginOpenAIEndpoint,
+	api.SettingPluginOpenAIModel,
 	api.SettingWorkspaceApproval,
 	api.SettingWorkspaceMailDelivery,
 	api.SettingWorkspaceProfile,
@@ -432,6 +434,12 @@ func (s *SettingService) UpdateSetting(ctx context.Context, request *v1pb.Update
 				}
 				setting.Wecom = payload.Wecom
 
+			case "value.app_im_setting_value.lark":
+				if err := lark.Validate(ctx, payload.GetLark().GetAppId(), payload.GetLark().GetAppSecret(), user.Email); err != nil {
+					return nil, status.Errorf(codes.InvalidArgument, "validation failed, error: %v", err)
+				}
+				setting.Lark = payload.Lark
+
 			default:
 				return nil, status.Errorf(codes.InvalidArgument, "invalid update mask path %v", path)
 			}
@@ -734,6 +742,9 @@ func (s *SettingService) convertToSettingMessage(ctx context.Context, setting *s
 						Wecom: &v1pb.AppIMSetting_Wecom{
 							Enabled: storeValue.Wecom != nil && storeValue.Wecom.Enabled,
 						},
+						Lark: &v1pb.AppIMSetting_Lark{
+							Enabled: storeValue.Lark != nil && storeValue.Lark.Enabled,
+						},
 					},
 				},
 			},
@@ -950,7 +961,7 @@ func (s *SettingService) validateSchemaTemplate(ctx context.Context, schemaTempl
 			Name:    "temp_table",
 			Columns: []*v1pb.ColumnMetadata{template.Column},
 		}
-		if err := validateTableMetadata(ctx, template.Engine, tableMetadata); err != nil {
+		if err := validateTableMetadata(template.Engine, tableMetadata); err != nil {
 			return err
 		}
 	}
@@ -965,7 +976,7 @@ func (s *SettingService) validateSchemaTemplate(ctx context.Context, schemaTempl
 		if ok && cmp.Equal(oldTemplate, template, protocmp.Transform()) {
 			continue
 		}
-		if err := validateTableMetadata(ctx, template.Engine, template.Table); err != nil {
+		if err := validateTableMetadata(template.Engine, template.Table); err != nil {
 			return err
 		}
 	}
@@ -973,7 +984,7 @@ func (s *SettingService) validateSchemaTemplate(ctx context.Context, schemaTempl
 	return nil
 }
 
-func validateTableMetadata(ctx context.Context, engine v1pb.Engine, tableMetadata *v1pb.TableMetadata) error {
+func validateTableMetadata(engine v1pb.Engine, tableMetadata *v1pb.TableMetadata) error {
 	tempSchema := &v1pb.SchemaMetadata{
 		Name:   "",
 		Tables: []*v1pb.TableMetadata{tableMetadata},
@@ -985,7 +996,7 @@ func validateTableMetadata(ctx context.Context, engine v1pb.Engine, tableMetadat
 		Name:    "temp_database",
 		Schemas: []*v1pb.SchemaMetadata{tempSchema},
 	}
-	tempStoreSchemaMetadata, _, err := convertV1DatabaseMetadata(ctx, tempMetadata, nil /* optionalStores */)
+	tempStoreSchemaMetadata, err := convertV1DatabaseMetadata(tempMetadata)
 	if err != nil {
 		return err
 	}

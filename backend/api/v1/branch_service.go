@@ -326,10 +326,18 @@ func (s *BranchService) UpdateBranch(ctx context.Context, request *v1pb.UpdateBr
 	}
 
 	if slices.Contains(request.UpdateMask.Paths, "schema_metadata") {
-		metadata, config, err := convertV1DatabaseMetadata(ctx, request.Branch.GetSchemaMetadata(), s.store)
+		metadata, err := convertV1DatabaseMetadata(request.Branch.GetSchemaMetadata())
 		if err != nil {
 			return nil, err
 		}
+		config := convertV1DatabaseConfig(
+			ctx,
+			&v1pb.DatabaseConfig{
+				Name:          metadata.Name,
+				SchemaConfigs: request.Branch.GetSchemaMetadata().SchemaConfigs,
+			},
+			s.store,
+		)
 
 		classificationConfig, err := s.store.GetDataClassificationConfigByID(ctx, project.DataClassificationConfigID)
 		if err != nil {
@@ -820,16 +828,32 @@ func (*BranchService) DiffMetadata(ctx context.Context, request *v1pb.DiffMetada
 	if request.SourceMetadata == nil || request.TargetMetadata == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "source_metadata and target_metadata are required")
 	}
-	storeSourceMetadata, sourceConfig, err := convertV1DatabaseMetadata(ctx, request.SourceMetadata, nil /* optionalStores */)
+	storeSourceMetadata, err := convertV1DatabaseMetadata(request.SourceMetadata)
 	if err != nil {
 		return nil, err
 	}
+	sourceConfig := convertV1DatabaseConfig(
+		ctx,
+		&v1pb.DatabaseConfig{
+			Name:          request.SourceMetadata.Name,
+			SchemaConfigs: request.SourceMetadata.SchemaConfigs,
+		},
+		nil, /* optionalStores */
+	)
 	sanitizeCommentForSchemaMetadata(storeSourceMetadata, model.NewDatabaseConfig(sourceConfig), request.ClassificationFromConfig)
 
-	storeTargetMetadata, targetConfig, err := convertV1DatabaseMetadata(ctx, request.TargetMetadata, nil /* optionalStores */)
+	storeTargetMetadata, err := convertV1DatabaseMetadata(request.TargetMetadata)
 	if err != nil {
 		return nil, err
 	}
+	targetConfig := convertV1DatabaseConfig(
+		ctx,
+		&v1pb.DatabaseConfig{
+			Name:          request.TargetMetadata.Name,
+			SchemaConfigs: request.TargetMetadata.SchemaConfigs,
+		},
+		nil, /* optionalStores */
+	)
 	if err := checkDatabaseMetadata(storepb.Engine(request.Engine), storeTargetMetadata); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid target metadata: %v", err)
 	}
@@ -922,15 +946,24 @@ func (s *BranchService) convertBranchToBranch(ctx context.Context, project *stor
 	}
 
 	v1Branch.Schema = string(branch.HeadSchema)
-	sm, err := convertStoreDatabaseMetadata(ctx, branch.Head.Metadata, branch.Head.DatabaseConfig, nil /* filter */, s.store)
+	sm, err := convertStoreDatabaseMetadata(branch.Head.Metadata, nil /* filter */)
 	if err != nil {
 		return nil, err
 	}
+	smc := convertStoreDatabaseConfig(ctx, branch.Head.DatabaseConfig, nil /* filter */, s.store)
+	if smc != nil {
+		sm.SchemaConfigs = smc.SchemaConfigs
+	}
+
 	v1Branch.SchemaMetadata = sm
 	v1Branch.BaselineSchema = string(branch.BaseSchema)
-	bsm, err := convertStoreDatabaseMetadata(ctx, branch.Base.Metadata, branch.Base.DatabaseConfig, nil /* filter */, s.store)
+	bsm, err := convertStoreDatabaseMetadata(branch.Base.Metadata, nil /* filter */)
 	if err != nil {
 		return nil, err
+	}
+	bsmc := convertStoreDatabaseConfig(ctx, branch.Base.DatabaseConfig, nil /* filter */, s.store)
+	if bsmc != nil {
+		bsm.SchemaConfigs = bsmc.SchemaConfigs
 	}
 	v1Branch.BaselineSchemaMetadata = bsm
 	return v1Branch, nil
@@ -1618,10 +1651,13 @@ func alignDatabaseConfig(metadata *storepb.DatabaseSchemaMetadata, config *store
 					})
 				} else {
 					columnConfig := &storepb.ColumnConfig{
-						Name:             columnName,
-						ClassificationId: columnConfig.ClassificationId,
-						SemanticTypeId:   columnConfig.SemanticTypeId,
-						Labels:           columnConfig.Labels,
+						Name:                      columnName,
+						ClassificationId:          columnConfig.ClassificationId,
+						SemanticTypeId:            columnConfig.SemanticTypeId,
+						Labels:                    columnConfig.Labels,
+						MaskingLevel:              columnConfig.MaskingLevel,
+						FullMaskingAlgorithmId:    columnConfig.FullMaskingAlgorithmId,
+						PartialMaskingAlgorithmId: columnConfig.PartialMaskingAlgorithmId,
 					}
 					tableConfig.ColumnConfigs = append(tableConfig.ColumnConfigs, columnConfig)
 				}
